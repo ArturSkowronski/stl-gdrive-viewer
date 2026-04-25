@@ -16,18 +16,97 @@ from typing import Optional
 if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
     from scanner.drive import DriveClient  # noqa: E402
-    from scanner.selector import pick_cover, pick_stls  # noqa: E402
+    from scanner.selector import (  # noqa: E402
+        pick_cover, pick_stls, score_image_bytes, _hints_for, _fetch_image,
+    )
     from scanner.thumbs import thumb_path, write_thumb  # noqa: E402
     from scanner.walker import walk  # noqa: E402
 else:
     from .drive import DriveClient
-    from .selector import pick_cover, pick_stls
+    from .selector import (
+        pick_cover, pick_stls, score_image_bytes, _hints_for, _fetch_image,
+    )
     from .thumbs import thumb_path, write_thumb
     from .walker import walk
 
 
 def _stl_view_url(file_id: str) -> str:
     return f"https://drive.google.com/file/d/{file_id}/view"
+
+
+def _run_analyze(client, models, csv_path: Path, limit: Optional[int]) -> int:
+    """Score every image candidate of every model and dump a CSV row per
+    candidate so the cover-selection logic can be audited end-to-end.
+
+    Columns: model, release, file, size_mb, hints, score, in_pool, picked.
+    """
+    import csv
+    import io as _io
+    from PIL import Image, ImageOps
+
+    if limit:
+        models = models[:limit]
+
+    csv_path.parent.mkdir(parents=True, exist_ok=True)
+    rows = []
+    for m in models:
+        cands = list(m.image_candidates)
+        # Identify the "in_pool" set the same way pick_cover does.
+        hints_per_file = {f.id: _hints_for(f.name, m.name) for f in cands}
+        hinted = [f for f in cands if hints_per_file[f.id]]
+        pool = hinted if hinted else cands
+
+        # Score everything (so the audit shows scores for non-pool files too).
+        scored: dict[str, float] = {}
+        for f in cands:
+            try:
+                data = _fetch_image(client, f)
+                score, _ = score_image_bytes(data)
+                scored[f.id] = score
+            except Exception as e:
+                logging.warning("analyze: %s/%s scoring failed: %s", m.name, f.name, e)
+
+        # Reproduce the pick: highest score within pool (size as tiebreaker
+        # already handled by pick_cover via candidate ordering — for the
+        # audit we just take max score in pool).
+        picked_id: Optional[str] = None
+        if pool:
+            scored_pool = [(f, scored.get(f.id, -1.0)) for f in pool]
+            scored_pool.sort(
+                key=lambda x: (x[1], (x[0].width or 0) * (x[0].height or 0)),
+                reverse=True,
+            )
+            picked_id = scored_pool[0][0].id
+
+        for f in cands:
+            rows.append({
+                "model": m.display_name,
+                "raw_folder": m.name,
+                "release": m.release or "",
+                "file": f.name,
+                "size_mb": round((f.size or 0) / 1_000_000, 2),
+                "hints": "|".join(hints_per_file[f.id]) or "-",
+                "score": (
+                    f"{scored[f.id]:.4f}" if f.id in scored else "ERR"
+                ),
+                "in_pool": "Y" if f in pool else "N",
+                "picked": "Y" if f.id == picked_id else "N",
+            })
+
+    if not rows:
+        logging.warning("analyze: no candidates to score")
+    with csv_path.open("w", newline="", encoding="utf-8") as fh:
+        writer = csv.DictWriter(fh, fieldnames=list(rows[0].keys()) if rows else [
+            "model", "raw_folder", "release", "file", "size_mb", "hints",
+            "score", "in_pool", "picked",
+        ])
+        writer.writeheader()
+        for row in rows:
+            writer.writerow(row)
+    logging.warning(
+        "analyze: wrote %d rows for %d models to %s", len(rows), len(models), csv_path,
+    )
+    return 0
 
 
 def _release_sort_key(release: Optional[str]) -> tuple:
@@ -56,6 +135,16 @@ def main() -> int:
     parser.add_argument(
         "--verbose", "-v", action="count", default=0, help="-v info, -vv debug"
     )
+    parser.add_argument(
+        "--analyze",
+        metavar="CSV",
+        help=(
+            "Diagnostic mode: instead of writing a manifest, scan every "
+            "model + image candidate, score them all, and write a CSV to "
+            "this path with hints, scores, and which file would be picked. "
+            "Use this to audit cover selection across the whole catalogue."
+        ),
+    )
     args = parser.parse_args()
 
     level = logging.WARNING
@@ -74,6 +163,9 @@ def main() -> int:
     logging.info("walking Drive from root %s", args.root)
     models = walk(client, args.root)
     logging.info("found %d candidate models", len(models))
+
+    if args.analyze:
+        return _run_analyze(client, models, Path(args.analyze), args.limit)
 
     # Merge models that ended up with the same (release, display_name) — e.g.
     # "Kratos_STL" and "Kratos_Presupport" both displaying as "Kratos" under

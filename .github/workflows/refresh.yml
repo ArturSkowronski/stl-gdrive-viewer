@@ -16,6 +16,11 @@ on:
         description: "Limit to first N models (debug, leave empty for all)"
         required: false
         type: string
+      analyze:
+        description: "Diagnostic mode: dump cover-selection CSV as artifact instead of building the gallery"
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -53,21 +58,37 @@ jobs:
           # work out of the box without needing GDRIVE_ROOT_FOLDER_ID variable.
           ROOT_FOLDER_ID: ${{ inputs.root_folder_id || vars.GDRIVE_ROOT_FOLDER_ID || '15F2OsqqekNu3C8MpdhMtsAcuZl5OwCDX' }}
           LIMIT: ${{ inputs.limit }}
+          ANALYZE: ${{ inputs.analyze }}
         run: |
-          args=(--root "$ROOT_FOLDER_ID" --out site/manifest.json --thumbs site/thumbs -v)
+          args=(--root "$ROOT_FOLDER_ID" -v)
           if [ -n "$LIMIT" ]; then
             args+=(--limit "$LIMIT")
           fi
+          if [ "$ANALYZE" = "true" ]; then
+            args+=(--analyze cover-analysis.csv --out /tmp/manifest.json --thumbs /tmp/thumbs)
+          else
+            args+=(--out site/manifest.json --thumbs site/thumbs)
+          fi
           python -m scanner.scan "${args[@]}"
 
+      - name: Upload analysis CSV
+        if: ${{ inputs.analyze == true }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: cover-analysis
+          path: cover-analysis.csv
+
       - uses: actions/configure-pages@v5
+        if: ${{ inputs.analyze != true }}
 
       - uses: actions/upload-pages-artifact@v3
+        if: ${{ inputs.analyze != true }}
         with:
           path: site
 
   deploy:
     needs: build
+    if: ${{ inputs.analyze != true }}
     runs-on: ubuntu-latest
     environment:
       name: github-pages

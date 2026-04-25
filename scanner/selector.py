@@ -33,9 +33,16 @@ SATURATION_WEIGHT = 0.3
 # images — promo art is usually larger than thumbnails) and take the top N.
 MAX_SCORED_PER_MODEL = 6
 
-# Beauty/cover hard short-circuit: NomNom's explicit cover label —
-# largest matching file wins, no scoring needed.
-_BEAUTY_RE = _re.compile(r"beauty[\s_\-]*shot|beauty[\s_\-]*pic|^cover", _re.IGNORECASE)
+# Hard short-circuit: filenames with an explicit "this IS the cover"
+# label win without scoring.
+#   beauty shot / beauty pic
+#   cover (file starts with "cover")
+#   FinalRender (with optional separator)
+#   bare "Final" as the entire base name
+_BEAUTY_RE = _re.compile(
+    r"beauty[\s_\-]*shot|beauty[\s_\-]*pic|^cover|final[\s_\-]*render|^final$",
+    _re.IGNORECASE,
+)
 
 # Soft filter: filenames containing "final" or "render" as a word, or
 # matching the folder name. These narrow the candidate pool that goes to
@@ -61,6 +68,21 @@ def _is_beauty_shot(name: str) -> bool:
     return bool(_BEAUTY_RE.search(name))
 
 
+def _is_hard_pick(filename: str, model_name: str) -> bool:
+    """Files that bypass scoring entirely:
+      - "Beauty shot" / "cover" / "FinalRender" labels (via _BEAUTY_RE)
+      - Filename that is a single clean proper-noun matching a token of
+        the model folder name (Geralt.jpg in a Geralt folder).
+    """
+    base = filename.rsplit(".", 1)[0]
+    if _BEAUTY_RE.search(base):
+        return True
+    if _PROPER_NOUN_RE.match(base) and base.lower() not in _NAME_STOPWORDS:
+        if base.lower() in _name_tokens(model_name):
+            return True
+    return False
+
+
 def _name_tokens(s: str) -> set[str]:
     return {
         t.lower()
@@ -69,18 +91,26 @@ def _name_tokens(s: str) -> set[str]:
     }
 
 
-def _has_hint(filename: str, model_name: str) -> bool:
-    """True if a filename hints this is a labelled candidate:
-      - contains 'final' or 'render' as a word
-      - is a clean single proper-noun file (Triss.jpg, Geralt.jpg)
-      - shares a meaningful token with the folder name
-    """
+def _hints_for(filename: str, model_name: str) -> list[str]:
+    """Return the list of hint labels that match the filename. Empty list
+    means it'll only enter the scoring pool when there are no hinted files."""
     base = filename.rsplit(".", 1)[0]
-    if _FINAL_RE.search(base) or _RENDER_RE.search(base):
-        return True
+    hits: list[str] = []
+    if _BEAUTY_RE.search(base):
+        hits.append("beauty")
+    if _FINAL_RE.search(base):
+        hits.append("final")
+    if _RENDER_RE.search(base):
+        hits.append("render")
     if _PROPER_NOUN_RE.match(base) and base.lower() not in _NAME_STOPWORDS:
-        return True
-    return bool(_name_tokens(base) & _name_tokens(model_name))
+        hits.append("propnoun")
+    if _name_tokens(base) & _name_tokens(model_name):
+        hits.append("foldername")
+    return hits
+
+
+def _has_hint(filename: str, model_name: str) -> bool:
+    return bool(_hints_for(filename, model_name))
 
 
 @dataclass
@@ -145,20 +175,20 @@ def pick_cover(client: DriveClient, model: Model) -> Optional[ScoredImage]:
         log.info("[%s] 0 image candidates", model.name)
         return None
 
-    # Beauty shots (NomNom's own cover art) bypass scoring — pick the
-    # largest matching file and use it directly.
-    beauty = [f for f in model.image_candidates if _is_beauty_shot(f.name)]
-    if beauty:
-        beauty.sort(key=lambda f: f.size or 0, reverse=True)
-        chosen = beauty[0]
-        log.info("[%s] beauty shot found: %s — using it as cover", model.name, chosen.name)
+    # Hard short-circuit: explicit cover labels (Beauty shot / cover /
+    # FinalRender / Final / FolderName.jpg) bypass scoring. Largest wins.
+    hard = [f for f in model.image_candidates if _is_hard_pick(f.name, model.name)]
+    if hard:
+        hard.sort(key=lambda f: f.size or 0, reverse=True)
+        chosen = hard[0]
+        log.info("[%s] hard pick: %s — using directly", model.name, chosen.name)
         try:
             data = _fetch_image(client, chosen)
             pil = Image.open(io.BytesIO(data))
             pil = ImageOps.exif_transpose(pil).convert("RGB")
             return ScoredImage(file=chosen, score=999.0, raw_bytes=data, pil_image=pil)
         except Exception as e:
-            log.warning("[%s] beauty shot %s failed (%s) — falling back to scoring", model.name, chosen.name, e)
+            log.warning("[%s] hard pick %s failed (%s) — falling back to scoring", model.name, chosen.name, e)
 
     # Filter pool: if any filenames carry a hint (final / render / folder
     # name token), score only those — bias toward labelled images. If none,
