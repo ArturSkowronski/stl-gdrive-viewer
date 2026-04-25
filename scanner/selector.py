@@ -39,8 +39,13 @@ MAX_SCORED_PER_MODEL = 6
 #   cover (file starts with "cover")
 #   FinalRender (with optional separator)
 #   bare "Final" as the entire base name
+#   "BS" suffix followed by a number (NomNom's "Beauty Shot" abbreviation,
+#    e.g. "BellBeast BS 01.jpg") — only when not preceded by a letter,
+#    so "ABS" / "TurntableBS" don't false-match.
 _BEAUTY_RE = _re.compile(
-    r"beauty[\s_\-]*shot|beauty[\s_\-]*pic|^cover|final[\s_\-]*render|^final$",
+    r"beauty[\s_\-]*shot|beauty[\s_\-]*pic|^cover|"
+    r"final[\s_\-]*render|^final$|"
+    r"(?<![a-zA-Z])bs[\s_\-]*\d",
     _re.IGNORECASE,
 )
 
