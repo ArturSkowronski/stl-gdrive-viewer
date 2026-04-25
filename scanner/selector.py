@@ -32,16 +32,13 @@ SATURATION_WEIGHT = 0.3
 # images — promo art is usually larger than thumbnails) and take the top N.
 MAX_SCORED_PER_MODEL = 6
 
-# Filenames matching this pattern are obvious cover art. They short-circuit
-# scoring entirely: largest matching file wins.
-import re as _re
+# Priority tiers for "obvious cover" filenames. Lower number = higher
+# priority; the best tier wins, with file size as tiebreaker.
+_BEAUTY_RE = _re.compile(r"beauty[\s_\-]*(shot|pic)", _re.IGNORECASE)
+_COVER_RE = _re.compile(r"^cover|[\s_\-]cover(?![a-z])", _re.IGNORECASE)
+_EDITED_RE = _re.compile(r"(?<![a-z])edited(?![a-z])", _re.IGNORECASE)
+_FINAL_RE = _re.compile(r"(?<![a-z])final(?![a-z])", _re.IGNORECASE)
 
-_OBVIOUS_RE = _re.compile(
-    r"beauty[\s_\-]*shot|beauty[\s_\-]*pic|^cover|(?<![a-z])final(?![a-z])",
-    _re.IGNORECASE,
-)
-# Tokens we ignore when matching folder name to filename — they're too
-# generic and would create false positives (e.g. "stl" appearing in both).
 _NAME_STOPWORDS = {
     "stl", "stls", "bust", "busts", "scale", "miniature", "miniatures",
     "render", "renders", "image", "images", "model", "the", "and", "for",
@@ -57,16 +54,20 @@ def _name_tokens(s: str) -> set[str]:
     }
 
 
-def _is_obvious_cover(filename: str, model_name: str) -> bool:
-    """True if a filename clearly identifies cover art for this model:
-    matches "beauty shot" / "cover" / "final", or shares a meaningful
-    token with the model's folder name (e.g. "Link.jpg" for "Link/")."""
+def _cover_priority(filename: str, model_name: str) -> int:
+    """Lower = better. 999 means no obvious-cover signal."""
     base = filename.rsplit(".", 1)[0]
-    if _OBVIOUS_RE.search(base):
-        return True
-    file_toks = _name_tokens(base)
-    name_toks = _name_tokens(model_name)
-    return bool(file_toks & name_toks)
+    if _BEAUTY_RE.search(base):
+        return 1
+    if _COVER_RE.search(base):
+        return 2
+    if _EDITED_RE.search(base):
+        return 3
+    if _FINAL_RE.search(base):
+        return 4
+    if _name_tokens(base) & _name_tokens(model_name):
+        return 5
+    return 999
 
 
 @dataclass
@@ -131,16 +132,21 @@ def pick_cover(client: DriveClient, model: Model) -> Optional[ScoredImage]:
         log.info("[%s] 0 image candidates", model.name)
         return None
 
-    # Obvious cover art (NomNom's "Beauty shot.jpg", "Final.jpg", or files
-    # named after the character like "Link.jpg" in the Link folder)
-    # short-circuits scoring entirely.
-    obvious = [
-        f for f in model.image_candidates if _is_obvious_cover(f.name, model.name)
+    # Obvious cover art short-circuits scoring. Priority tiers:
+    # 1=beauty, 2=cover, 3=edited, 4=final, 5=folder-name match.
+    ranked = [
+        (f, _cover_priority(f.name, model.name)) for f in model.image_candidates
     ]
+    obvious = sorted(
+        ((f, p) for f, p in ranked if p < 999),
+        key=lambda x: (x[1], -(x[0].size or 0)),
+    )
     if obvious:
-        obvious.sort(key=lambda f: f.size or 0, reverse=True)
-        chosen = obvious[0]
-        log.info("[%s] obvious cover: %s — using directly", model.name, chosen.name)
+        chosen, tier = obvious[0]
+        log.info(
+            "[%s] obvious cover (tier %d): %s — using directly",
+            model.name, tier, chosen.name,
+        )
         try:
             data = _fetch_image(client, chosen)
             pil = Image.open(io.BytesIO(data))
