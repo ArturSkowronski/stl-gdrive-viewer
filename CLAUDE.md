@@ -5,16 +5,68 @@ anything in `scanner/`, `site/`, or `.github/workflows/`.
 
 ## What this is
 
-Static gallery of 3D models from a Google Drive root, refreshed daily by
-GitHub Actions and served from GitHub Pages. The user keeps NomNom Figures
-release packs as Drive shortcuts; the scanner walks the tree, picks one
-cover image per character, and writes a manifest the frontend renders as
-a card grid.
+Static personal gallery of 3D-printable miniatures the user buys from
+**NomNom Figures** (Patreon, monthly drops). Each release lands in their
+Google Drive as a shared folder which the user adds to their own Drive
+as a shortcut. Over months that turns into dozens of folders with
+inconsistent internal layouts — some have STLs at the top level, some
+nest them under `STL/Bust/`, `Presupports/STL/`, `1/10 Scale Split/`,
+or pack everything inside a `_STL.7z` archive. Cover renders sit
+sometimes next to the STLs, sometimes in `Render Images/`, sometimes
+in the parent folder, sometimes named `Beauty shot.jpg`, sometimes
+`BS 01.jpg`, sometimes `Triss.jpg`, sometimes just `12.jpg`.
 
-Live: https://arturskowronski.github.io/stl-gdrive-viewer/
+The goal is a browsable catalogue — open a phone, see every model the
+user owns as a card with a painted-figure preview, tap through to the
+Drive page when they want to print one. Not a store, not a viewer —
+an index.
 
-UI strings are Polish; comments and identifiers are English. Mirror that
-when adding code or copy.
+### Who it's for
+
+One user (the repo owner). Public-readable on GitHub Pages because
+GitHub Pages on a free account is public, but everything points back
+into the user's Drive — anyone clicking a card lands on Drive's own
+permission check. STL bytes are never copied into the repo, never
+re-uploaded anywhere, never thumbnailed beyond a 600px JPEG of the
+*image* (not the model). NomNom owns the models; this project is a
+client-side index for files the user already has rights to.
+
+### Why this shape
+
+- **Static site on GitHub Pages**: the user wanted zero infrastructure
+  — no server, no DB, no CDN bill. The whole runtime budget is the
+  GitHub Actions free tier.
+- **Daily cron + manual dispatch**: NomNom drops monthly, so once a
+  day is plenty. Manual dispatch covers the "I just bought another
+  pack, refresh now" case.
+- **Drive API rather than `gcloud` / `gws` CLI**: the user's first
+  instinct was a CLI, but file-level Drive operations are squarely a
+  Drive API job. Service accounts can't see files shared with the
+  user's personal Gmail (different identity), so auth defaults to
+  user OAuth refresh token; an API key path exists for fully public
+  trees because it's two minutes of setup vs ten.
+- **Cover image picked by *colourfulness*, not size or alphabet**:
+  NomNom ships ~10–30 renders per character — painted hero shots,
+  greyscale STL renders, scale charts, parts breakdowns. Painted
+  figures dominate Hasler-Süsstrunk colorfulness; greyscale technical
+  sheets bottom out near zero. Filename heuristics layer on top to
+  short-circuit the obvious cases (`Beauty shot.jpg`, `BS 01.jpg`,
+  `Geralt.jpg`-in-Geralt-folder).
+
+### What "done" looks like
+
+- Open https://arturskowronski.github.io/stl-gdrive-viewer/ on a phone.
+- Single column, painted-figure thumbnails, character name + release
+  chip, search box, release filter.
+- Each card has one button per STL/archive in that character's folder
+  (presupported variants first), opening Drive's web view.
+- Daily Actions run takes ~1–2 minutes, costs ~5–10 Actions minutes,
+  redeploys Pages without manual intervention.
+
+### Live UI strings are Polish
+
+UI strings are Polish; comments and identifiers are English. Mirror
+that when adding code or copy.
 
 ## Architecture
 
