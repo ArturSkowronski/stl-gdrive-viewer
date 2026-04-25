@@ -79,14 +79,18 @@ def main() -> int:
         models = models[: args.limit]
 
     manifest_models = []
+    skipped_no_cover: list[str] = []
+    skipped_no_stl: list[str] = []
     for m in models:
         cover = pick_cover(client, m)
         stl = pick_stl(m)
         if not cover:
             logging.warning("skip %s — no usable cover image", m.name)
+            skipped_no_cover.append(m.name)
             continue
         if not stl:
             logging.warning("skip %s — no STL", m.name)
+            skipped_no_stl.append(m.name)
             continue
 
         thumb_dest = thumb_path(thumbs_dir, m.name, cover.file.id)
@@ -126,7 +130,19 @@ def main() -> int:
         "models": manifest_models,
     }
     out_path.write_text(json.dumps(manifest, indent=2, ensure_ascii=False))
-    logging.info("wrote manifest with %d models to %s", len(manifest_models), out_path)
+
+    # Final summary so the cause of any drop-off is obvious in CI logs.
+    total = len(models)
+    written = len(manifest_models)
+    logging.warning(
+        "summary: %d candidates -> %d written, %d skipped (no cover), %d skipped (no STL)",
+        total, written, len(skipped_no_cover), len(skipped_no_stl),
+    )
+    if skipped_no_cover:
+        logging.warning("skipped (no cover): %s", ", ".join(skipped_no_cover))
+    if skipped_no_stl:
+        logging.warning("skipped (no STL): %s", ", ".join(skipped_no_stl))
+    logging.info("wrote manifest with %d models to %s", written, out_path)
     return 0
 
 

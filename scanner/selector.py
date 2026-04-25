@@ -76,57 +76,86 @@ def pick_cover(client: DriveClient, model: Model) -> Optional[ScoredImage]:
     Falls back to the first successfully-loaded image if scoring fails for
     every candidate — better to show *some* picture than skip the model.
     """
-    if not model.image_candidates:
+    n = len(model.image_candidates)
+    log.info(
+        "[%s] %d image candidate(s): %s",
+        model.name,
+        n,
+        ", ".join(f.name for f in model.image_candidates) or "(none)",
+    )
+    if n == 0:
         return None
 
     scored: List[ScoredImage] = []
     fallback: Optional[ScoredImage] = None
 
     for f in model.image_candidates:
+        size_str = f"{f.size/1_000_000:.1f}MB" if f.size else "?MB"
         try:
             data = client.download_bytes(f.id, max_bytes=DOWNLOAD_HARD_CAP)
         except Exception as e:
-            log.warning("download failed for %s: %s", f.name, e)
+            log.warning("[%s]   reject %s (%s): download — %s", model.name, f.name, size_str, e)
             continue
 
         try:
             score, pil = score_image_bytes(data)
             scored.append(ScoredImage(file=f, score=score, raw_bytes=data, pil_image=pil))
-            log.debug("score %.3f for %s in %s", score, f.name, model.name)
+            log.info("[%s]   ok     %s (%s) score=%.3f", model.name, f.name, size_str, score)
         except Exception as e:
-            log.warning("scoring failed for %s: %s — keeping as fallback", f.name, e)
+            log.warning(
+                "[%s]   reject %s (%s): scoring — %s (kept as fallback)",
+                model.name, f.name, size_str, e,
+            )
             if fallback is None:
                 try:
                     pil = Image.open(io.BytesIO(data))
                     pil = ImageOps.exif_transpose(pil).convert("RGB")
                     fallback = ScoredImage(file=f, score=0.0, raw_bytes=data, pil_image=pil)
                 except Exception as e2:
-                    log.warning("fallback decode failed for %s: %s", f.name, e2)
+                    log.warning("[%s]   fallback decode failed for %s: %s", model.name, f.name, e2)
 
     if scored:
         scored.sort(
             key=lambda c: (c.score, (c.file.width or 0) * (c.file.height or 0)),
             reverse=True,
         )
-        return scored[0]
+        chosen = scored[0]
+        log.info(
+            "[%s] picked cover %s (score=%.3f, %d/%d scored)",
+            model.name, chosen.file.name, chosen.score, len(scored), n,
+        )
+        return chosen
 
     if fallback:
-        log.info("using fallback image %s for model %s", fallback.file.name, model.name)
+        log.info("[%s] picked fallback cover %s (no scoring succeeded)", model.name, fallback.file.name)
+    else:
+        log.warning("[%s] no cover possible — all %d candidates failed", model.name, n)
     return fallback
 
 
 def pick_stl(model: Model) -> Optional[StlEntry]:
     """Pick the most useful STL: presupported preferred, then largest."""
-    if not model.stl_candidates:
+    n = len(model.stl_candidates)
+    if n == 0:
+        log.warning("[%s] no STL files in subtree", model.name)
         return None
 
     presupported = [
         s for s in model.stl_candidates if "presupported" in s.parent_folder_name.lower()
     ]
     pool = presupported if presupported else model.stl_candidates
+    pool_label = "presupported" if presupported else "any"
     pool_sorted = sorted(
         pool,
         key=lambda s: (s.file.size or 0),
         reverse=True,
     )
-    return pool_sorted[0]
+    chosen = pool_sorted[0]
+    log.info(
+        "[%s] picked STL %s (%s, %d/%d candidates from '%s' pool)",
+        model.name,
+        chosen.file.name,
+        f"{(chosen.file.size or 0)/1_000_000:.1f}MB",
+        1, len(pool), pool_label,
+    )
+    return chosen
