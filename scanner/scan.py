@@ -75,6 +75,44 @@ def main() -> int:
     models = walk(client, args.root)
     logging.info("found %d candidate models", len(models))
 
+    # Merge models that ended up with the same (release, display_name) — e.g.
+    # "Kratos_STL" and "Kratos_Presupport" both displaying as "Kratos" under
+    # the same release. STLs and images are unioned by file id to avoid dupes.
+    merged: dict[tuple, "object"] = {}
+    for m in models:
+        key = (m.release or "", m.display_name)
+        if key in merged:
+            existing = merged[key]
+            existing.image_candidates.extend(m.image_candidates)
+            existing.stl_candidates.extend(m.stl_candidates)
+        else:
+            merged[key] = m
+
+    def _dedupe(items, file_id):
+        seen, out = set(), []
+        for x in items:
+            k = file_id(x)
+            if k not in seen:
+                seen.add(k)
+                out.append(x)
+        return out
+
+    merged_models = []
+    for m in merged.values():
+        before_imgs, before_stls = len(m.image_candidates), len(m.stl_candidates)
+        m.image_candidates = _dedupe(m.image_candidates, lambda f: f.id)
+        m.stl_candidates = _dedupe(m.stl_candidates, lambda s: s.file.id)
+        if before_imgs != len(m.image_candidates) or before_stls != len(m.stl_candidates):
+            logging.info(
+                "merged duplicates for %s: images %d->%d, stls %d->%d",
+                m.display_name, before_imgs, len(m.image_candidates),
+                before_stls, len(m.stl_candidates),
+            )
+        merged_models.append(m)
+    if len(merged_models) != len(models):
+        logging.info("merged %d -> %d models", len(models), len(merged_models))
+    models = merged_models
+
     if args.limit:
         models = models[: args.limit]
 

@@ -32,7 +32,9 @@ MAX_DEPTH = 6
 # unusable for display, and the walker climbs up the path to find a real one.
 GENERIC_TOKENS = {
     "stl", "stls", "bust", "busts", "split", "splits",
-    "presupported", "unsupported", "supported",
+    "presupported", "presupports", "presupport",
+    "unsupported", "unsupports", "unsupport",
+    "supported", "supports",
     "scale", "miniature", "miniatures", "mini", "minis", "mm",
     "raw", "bonus", "extras", "files", "images", "renders", "lore",
 }
@@ -40,7 +42,10 @@ GENERIC_TOKENS = {
 # Strips trailing format/variant labels separated by space/_/- so
 # "Asuka_STL" -> "Asuka" and "Tifa Bust" -> "Tifa".
 _TRAILING_GENERIC_RE = re.compile(
-    r"[\s_\-]+(stl|stls|bust|busts|split|splits|presupported|unsupported|"
+    r"[\s_\-]+(stl|stls|bust|busts|split|splits|"
+    r"presupported|presupports|presupport|"
+    r"unsupported|unsupports|unsupport|"
+    r"supported|supports|"
     r"miniature|miniatures|files|raw)$",
     re.IGNORECASE,
 )
@@ -191,61 +196,84 @@ def _visit(
     pending_models = [m for _, r in sub_results for m in r["models_added"]]
     sub_has_stl = any(r["has_stl"] for _, r in sub_results) or bool(direct_stls)
 
+    if not sub_has_stl:
+        if root_name:
+            log.debug("skip (no stls): %s", "/".join(path))
+        return {"has_stl": False, "models_added": [], "all_images": [], "all_stls": []}
+
+    name_is_generic = _is_generic_name(root_name)
+    is_root = depth == 0
+
     if pending_models:
-        # I am a GROUP. Set my name as `release` on any pending model that
-        # doesn't already have one (nearest-ancestor wins).
+        # I have non-generic descendants that already became models. I'm a GROUP.
+        # Distribute my own + bubbled-up images to those models and label release.
+        my_images = list(direct_images)
+        for _, r in sub_results:
+            my_images.extend(r["all_images"])
         for m in pending_models:
-            if m.release is None and root_name:
+            if my_images:
+                m.image_candidates.extend(my_images)
+            if m.release is None and root_name and not name_is_generic and not is_root:
                 m.release = root_name
-        # Propagate upward unchanged.
         return {
-            "has_stl": sub_has_stl,
+            "has_stl": True,
             "models_added": pending_models,
             "all_images": [],
             "all_stls": [],
         }
 
-    if sub_has_stl:
-        # I am a MODEL. Aggregate all images and STLs from my subtree.
-        all_images = list(direct_images)
-        all_stls = list(direct_stls)
-        for _, r in sub_results:
-            all_images.extend(r["all_images"])
-            all_stls.extend(r["all_stls"])
+    # No descendant model proposed yet. Either I become the model (if my name
+    # is meaningful), or I bubble up everything I aggregated to my parent.
+    all_images = list(direct_images)
+    all_stls = list(direct_stls)
+    for _, r in sub_results:
+        all_images.extend(r["all_images"])
+        all_stls.extend(r["all_stls"])
 
-        leaf = root_name or "(root)"
-        display_name = _meaningful_name(path, leaf)
-        if display_name != leaf:
-            log.info(
-                "display rename: %s -> %s (path=%s)",
-                leaf, display_name, "/".join(path),
-            )
-
-        model = Model(
-            name=leaf,
-            display_name=display_name,
-            folder_id=folder_id,
-            folder_path=list(path),
-            web_view_link=f"https://drive.google.com/drive/folders/{folder_id}",
-            image_candidates=all_images,
-            stl_candidates=all_stls,
-        )
-        models.append(model)
-        log.info(
-            "model: %s (images=%d, stls=%d, path=%s)",
-            model.name,
-            len(all_images),
-            len(all_stls),
-            "/".join(path),
+    if name_is_generic or is_root:
+        # Generic container ("STL", "Bust", "Presupports", "1/10 Scale", ...)
+        # — propagate up so a non-generic ancestor takes ownership.
+        log.debug(
+            "bubble up from %s: %d images, %d stls",
+            "/".join(path) or "(root)", len(all_images), len(all_stls),
         )
         return {
             "has_stl": True,
-            "models_added": [model],
-            "all_images": [],
-            "all_stls": [],
+            "models_added": [],
+            "all_images": all_images,
+            "all_stls": all_stls,
         }
 
-    # No STLs anywhere — skip.
-    if root_name:
-        log.debug("skip (no stls): %s", "/".join(path))
-    return {"has_stl": False, "models_added": [], "all_images": [], "all_stls": []}
+    # I'm a non-generic folder with STLs in my subtree and no sub-models.
+    # Become THE model for everything in this subtree.
+    leaf = root_name
+    display_name = _meaningful_name(path, leaf)
+    if display_name != leaf:
+        log.info(
+            "display rename: %s -> %s (path=%s)",
+            leaf, display_name, "/".join(path),
+        )
+
+    model = Model(
+        name=leaf,
+        display_name=display_name,
+        folder_id=folder_id,
+        folder_path=list(path),
+        web_view_link=f"https://drive.google.com/drive/folders/{folder_id}",
+        image_candidates=all_images,
+        stl_candidates=all_stls,
+    )
+    models.append(model)
+    log.info(
+        "model: %s (images=%d, stls=%d, path=%s)",
+        model.name,
+        len(all_images),
+        len(all_stls),
+        "/".join(path),
+    )
+    return {
+        "has_stl": True,
+        "models_added": [model],
+        "all_images": [],
+        "all_stls": [],
+    }
