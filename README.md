@@ -131,10 +131,8 @@ Workflow ma dwa opcjonalne pola w „Run workflow":
   zostawisz puste, użyje wartości variable. **Domyślnie** wpisany jest
   folder NomNom (`15F2OsqqekNu3C8MpdhMtsAcuZl5OwCDX`) — możesz go
   podmienić lub wyczyścić. Cron używa zawsze `vars.GDRIVE_ROOT_FOLDER_ID`.
-- **`limit`** — przerób tylko pierwsze N modeli. **Domyślnie `3`** (szybki
-  test przy ręcznych runach). Wyczyść pole, żeby zeskanować wszystko.
-  Cron leci zawsze bez limitu (pole `inputs.limit` jest puste dla
-  `schedule`).
+- **`limit`** — przerób tylko pierwsze N modeli (debug). Domyślnie puste
+  = bez limitu. Cron i push też lecą bez limitu.
 
 Po sukcesie URL Pages wyświetli się w środowisku `github-pages`.
 

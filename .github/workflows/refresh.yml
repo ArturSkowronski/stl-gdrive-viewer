@@ -13,10 +13,9 @@ on:
         type: string
         default: "15F2OsqqekNu3C8MpdhMtsAcuZl5OwCDX"
       limit:
-        description: "Limit to first N models (debug, set empty for all)"
+        description: "Limit to first N models (debug, leave empty for all)"
         required: false
         type: string
-        default: "3"
 
 permissions:
   contents: read
