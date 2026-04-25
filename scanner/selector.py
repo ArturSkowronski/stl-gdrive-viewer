@@ -36,8 +36,8 @@ MAX_SCORED_PER_MODEL = 6
 # priority; the best tier wins, with file size as tiebreaker.
 _BEAUTY_RE = _re.compile(r"beauty[\s_\-]*(shot|pic)", _re.IGNORECASE)
 _COVER_RE = _re.compile(r"^cover|[\s_\-]cover(?![a-z])", _re.IGNORECASE)
-_EDITED_RE = _re.compile(r"(?<![a-z])edited(?![a-z])", _re.IGNORECASE)
-_FINAL_RE = _re.compile(r"(?<![a-z])final(?![a-z])", _re.IGNORECASE)
+_EDITED_RE = _re.compile(r"(?<![a-z])edited|edited(?![a-z])", _re.IGNORECASE)
+_FINAL_RE = _re.compile(r"(?<![a-z])final|final(?![a-z])", _re.IGNORECASE)
 
 _NAME_STOPWORDS = {
     "stl", "stls", "bust", "busts", "scale", "miniature", "miniatures",
