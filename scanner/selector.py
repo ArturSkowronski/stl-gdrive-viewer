@@ -43,7 +43,13 @@ _NAME_STOPWORDS = {
     "stl", "stls", "bust", "busts", "scale", "miniature", "miniatures",
     "render", "renders", "image", "images", "model", "the", "and", "for",
     "from", "presupported", "unsupported",
+    "parts", "wip", "test", "lore", "raw", "photo", "photos", "preview",
+    "turntable", "supported", "unsupports", "presupports",
 }
+
+# Single capitalized proper-noun filename like "Triss.jpg" or "Geralt.jpg"
+# — a clean single token, not a technical label, treated as a dedicated cover.
+_PROPER_NOUN_RE = _re.compile(r"^[A-Z][a-zA-Z]{2,}$")
 
 
 def _name_tokens(s: str) -> set[str]:
@@ -65,8 +71,12 @@ def _cover_priority(filename: str, model_name: str) -> int:
         return 3
     if _FINAL_RE.search(base):
         return 4
-    if _name_tokens(base) & _name_tokens(model_name):
+    # "Triss.jpg", "Geralt.jpg" — a clean single capitalized proper noun
+    # the artist clearly intended as the showcase image.
+    if _PROPER_NOUN_RE.match(base) and base.lower() not in _NAME_STOPWORDS:
         return 5
+    if _name_tokens(base) & _name_tokens(model_name):
+        return 6
     return 999
 
 
