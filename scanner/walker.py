@@ -105,7 +105,8 @@ def _is_image(f: DriveFile) -> bool:
 
 @dataclass
 class Model:
-    name: str
+    name: str  # raw folder name on Drive, never altered
+    display_name: str  # cleaned label for UI; equal to `name` when no rename
     folder_id: str
     folder_path: List[str]  # ancestor names, root-relative
     web_view_link: Optional[str]
@@ -216,12 +217,13 @@ def _visit(
         display_name = _meaningful_name(path, leaf)
         if display_name != leaf:
             log.info(
-                "renamed model: %s -> %s (path=%s)",
+                "display rename: %s -> %s (path=%s)",
                 leaf, display_name, "/".join(path),
             )
 
         model = Model(
-            name=display_name,
+            name=leaf,
+            display_name=display_name,
             folder_id=folder_id,
             folder_path=list(path),
             web_view_link=f"https://drive.google.com/drive/folders/{folder_id}",

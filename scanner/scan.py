@@ -100,7 +100,7 @@ def main() -> int:
         manifest_models.append(
             {
                 "id": m.folder_id,
-                "name": m.name,
+                "name": m.display_name,
                 "release": m.release,
                 "folder_url": m.web_view_link,
                 "thumb": thumb_rel,
