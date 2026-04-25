@@ -70,6 +70,15 @@ def _cover_priority(filename: str, model_name: str) -> int:
     return 999
 
 
+def _series_number(filename: str) -> int:
+    """Last numeric token in the filename — proxy for series ordinal.
+    `Queen-of-Blades-1_edited.jpg` -> 1, `Asuka_v2_edited.jpg` -> 2.
+    Files with no number sort after numbered ones (default 999_999)."""
+    base = filename.rsplit(".", 1)[0]
+    nums = _re.findall(r"\d+", base)
+    return int(nums[-1]) if nums else 999_999
+
+
 @dataclass
 class ScoredImage:
     file: DriveFile
@@ -139,7 +148,8 @@ def pick_cover(client: DriveClient, model: Model) -> Optional[ScoredImage]:
     ]
     obvious = sorted(
         ((f, p) for f, p in ranked if p < 999),
-        key=lambda x: (x[1], -(x[0].size or 0)),
+        # tier asc, then series number asc (lowest first), then size desc
+        key=lambda x: (x[1], _series_number(x[0].name), -(x[0].size or 0)),
     )
     if obvious:
         chosen, tier = obvious[0]
