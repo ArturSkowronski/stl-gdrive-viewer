@@ -105,6 +105,14 @@ function renderGrid() {
   $grid.innerHTML = items.map(renderCard).join("");
 }
 
+function plPlural(n, one, few, many) {
+  if (n === 1) return one;
+  const mod10 = n % 10;
+  const mod100 = n % 100;
+  if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) return few;
+  return many;
+}
+
 async function load() {
   try {
     const resp = await fetch("manifest.json", { cache: "no-cache" });
@@ -114,7 +122,9 @@ async function load() {
     state.releases = data.releases || [];
     if (data.generated_at) {
       const d = new Date(data.generated_at);
-      $meta.textContent = `Aktualizacja: ${d.toLocaleString()} · ${state.models.length} modeli`;
+      const n = state.models.length;
+      const word = plPlural(n, "model", "modele", "modeli");
+      $meta.textContent = `Aktualizacja: ${d.toLocaleString()} · ${n} ${word}`;
     }
   } catch (err) {
     $grid.innerHTML = "";
