@@ -26,6 +26,12 @@ SCORE_RESIZE_TO = 256  # downscale before scoring — speed
 COLORFULNESS_WEIGHT = 0.7
 SATURATION_WEIGHT = 0.3
 
+# Cap how many images we score per model. NomNom often ships 10-30 renders
+# per character; downloading them all hammers the Drive API and rarely
+# changes the verdict. We rank by file size first (proxy for "interesting"
+# images — promo art is usually larger than thumbnails) and take the top N.
+MAX_SCORED_PER_MODEL = 6
+
 
 @dataclass
 class ScoredImage:
@@ -76,12 +82,19 @@ def pick_cover(client: DriveClient, model: Model) -> Optional[ScoredImage]:
     Falls back to the first successfully-loaded image if scoring fails for
     every candidate — better to show *some* picture than skip the model.
     """
-    n = len(model.image_candidates)
+    n_total = len(model.image_candidates)
+    # Score at most MAX_SCORED_PER_MODEL — pick the largest first since
+    # promo art / beauty shots are usually larger than icon-style thumbs.
+    candidates = sorted(
+        model.image_candidates, key=lambda f: f.size or 0, reverse=True
+    )[:MAX_SCORED_PER_MODEL]
+    n = len(candidates)
     log.info(
-        "[%s] %d image candidate(s): %s",
+        "[%s] %d image candidate(s) (scoring %d): %s",
         model.name,
+        n_total,
         n,
-        ", ".join(f.name for f in model.image_candidates) or "(none)",
+        ", ".join(f.name for f in candidates) or "(none)",
     )
     if n == 0:
         return None
@@ -89,7 +102,7 @@ def pick_cover(client: DriveClient, model: Model) -> Optional[ScoredImage]:
     scored: List[ScoredImage] = []
     fallback: Optional[ScoredImage] = None
 
-    for f in model.image_candidates:
+    for f in candidates:
         size_str = f"{f.size/1_000_000:.1f}MB" if f.size else "?MB"
         try:
             data = client.download_bytes(f.id, max_bytes=DOWNLOAD_HARD_CAP)

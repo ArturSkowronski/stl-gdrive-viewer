@@ -17,15 +17,24 @@ from __future__ import annotations
 import io
 import logging
 import os
+import random
+import time
 from dataclasses import dataclass
 from typing import Iterator, Optional
 
 from googleapiclient.discovery import build
+from googleapiclient.errors import HttpError
 from googleapiclient.http import MediaIoBaseDownload
 
 log = logging.getLogger(__name__)
 
 SCOPES = ["https://www.googleapis.com/auth/drive.readonly"]
+
+# Spacing between Drive API requests so an unauth API key doesn't get
+# flagged as automated traffic. ~3 req/s is well under the per-key quota.
+_REQUEST_INTERVAL_S = 0.3
+_RETRY_STATUSES = {403, 429, 500, 502, 503, 504}
+_MAX_RETRIES = 5
 
 FOLDER_MIME = "application/vnd.google-apps.folder"
 SHORTCUT_MIME = "application/vnd.google-apps.shortcut"
@@ -128,15 +137,54 @@ def _build_service_auto():
     )
 
 
+def _is_retryable(err: Exception) -> bool:
+    if isinstance(err, HttpError):
+        status = getattr(err.resp, "status", None)
+        try:
+            status = int(status)
+        except (TypeError, ValueError):
+            status = None
+        return status in _RETRY_STATUSES
+    return False
+
+
+def _with_retry(label: str, fn):
+    """Call fn(), retrying on Google rate-limit / transient errors with
+    exponential backoff + jitter."""
+    delay = 1.0
+    for attempt in range(1, _MAX_RETRIES + 1):
+        try:
+            return fn()
+        except Exception as e:
+            if not _is_retryable(e) or attempt == _MAX_RETRIES:
+                raise
+            wait = delay + random.uniform(0, 0.5)
+            log.warning(
+                "%s — retry %d/%d after %.1fs: %s",
+                label, attempt, _MAX_RETRIES - 1, wait, e,
+            )
+            time.sleep(wait)
+            delay *= 2
+
+
 class DriveClient:
     def __init__(self):
         self._service, self.auth_mode = _build_service_auto()
+        self._last_request_at = 0.0
+
+    def _throttle(self):
+        elapsed = time.monotonic() - self._last_request_at
+        if elapsed < _REQUEST_INTERVAL_S:
+            time.sleep(_REQUEST_INTERVAL_S - elapsed)
+        self._last_request_at = time.monotonic()
 
     def list_children(self, folder_id: str) -> Iterator[DriveFile]:
         page_token: Optional[str] = None
         while True:
-            resp = (
-                self._service.files()
+            self._throttle()
+            resp = _with_retry(
+                f"list({folder_id})",
+                lambda: self._service.files()
                 .list(
                     q=f"'{folder_id}' in parents and trashed=false",
                     fields=LIST_FIELDS,
@@ -145,7 +193,7 @@ class DriveClient:
                     supportsAllDrives=True,
                     includeItemsFromAllDrives=True,
                 )
-                .execute()
+                .execute(),
             )
             for raw in resp.get("files", []):
                 yield DriveFile.from_api(raw)
@@ -155,16 +203,21 @@ class DriveClient:
 
     def download_bytes(self, file_id: str, max_bytes: int = 8 * 1024 * 1024) -> bytes:
         """Download a file. Aborts past max_bytes to keep memory bounded."""
-        request = self._service.files().get_media(
-            fileId=file_id, supportsAllDrives=True
-        )
-        buf = io.BytesIO()
-        downloader = MediaIoBaseDownload(buf, request, chunksize=1024 * 1024)
-        done = False
-        while not done:
-            _, done = downloader.next_chunk()
-            if buf.tell() > max_bytes:
-                raise ValueError(
-                    f"file {file_id} exceeded {max_bytes} bytes — aborting download"
-                )
-        return buf.getvalue()
+
+        def _do_download() -> bytes:
+            request = self._service.files().get_media(
+                fileId=file_id, supportsAllDrives=True
+            )
+            buf = io.BytesIO()
+            downloader = MediaIoBaseDownload(buf, request, chunksize=1024 * 1024)
+            done = False
+            while not done:
+                _, done = downloader.next_chunk()
+                if buf.tell() > max_bytes:
+                    raise ValueError(
+                        f"file {file_id} exceeded {max_bytes} bytes — aborting download"
+                    )
+            return buf.getvalue()
+
+        self._throttle()
+        return _with_retry(f"download({file_id})", _do_download)
