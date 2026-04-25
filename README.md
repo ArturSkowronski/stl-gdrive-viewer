@@ -26,21 +26,41 @@ Jeśli ustawisz oba zestawy sekretów, skaner użyje API key.
 
 ### 1. Google Cloud — projekt + Drive API
 
-1. https://console.cloud.google.com → utwórz projekt.
-2. **APIs & Services → Library** → „Google Drive API" → **Enable**.
+1. Wejdź na https://console.cloud.google.com (zaloguj się dowolnym
+   kontem Google — **nie musi** to być konto z dostępem do plików;
+   API key działa anonimowo na publicznych plikach).
+2. Na górnej belce kliknij listę projektów → **New Project**, nazwij
+   np. `stl-gdrive-viewer`, **Create**. Poczekaj aż się utworzy i
+   wybierz go z listy.
+3. W lewym menu **APIs & Services → Library** → wpisz „Google Drive API"
+   → kliknij wynik → **Enable**. Po kilku sekundach przekieruje cię
+   z powrotem.
 
 ### 2. Wygeneruj API key
 
-1. **APIs & Services → Credentials → + Create Credentials → API key**.
-2. Skopiuj klucz. Dla bezpieczeństwa: **Edit API key** →
-   *API restrictions* → ogranicz do „Google Drive API".
+1. **APIs & Services → Credentials**.
+2. Na górze: **+ Create Credentials → API key**.
+3. Pojawi się modal z kluczem — **skopiuj go natychmiast** (zaczyna
+   się od `AIza...`). Możesz go zawsze przeglądać też później na
+   tej liście.
+4. (Zalecane bezpieczeństwo) Kliknij nazwę klucza → **Edit API key**:
+   - *Application restrictions*: zostaw `None` (Actions nie ma stałego
+     IP).
+   - *API restrictions*: wybierz **Restrict key** → zaznacz
+     **Google Drive API** → **Save**.
+
+   Bez restrykcji klucz działa, ale dobrze go ograniczyć — jeśli
+   wycieknie, zadziała tylko do Drive.
 
 ### 3. GitHub Secrets + Variable
 
 W repo → **Settings → Secrets and variables → Actions**:
 
-- **Secret**: `GOOGLE_API_KEY` = wartość z kroku 2.
-- **Variable**: `GDRIVE_ROOT_FOLDER_ID` = ID głównego folderu z URL-a.
+- **New repository secret**: `GOOGLE_API_KEY` = wartość z kroku 2.
+- **Variables → New repository variable**: `GDRIVE_ROOT_FOLDER_ID`
+  = ID głównego folderu z URL-a (`drive.google.com/drive/folders/<TUTAJ>`).
+  Możesz pominąć ten variable jeśli zawsze będziesz podawać folder
+  ręcznie przy uruchamianiu workflow (patrz niżej).
 
 Pomiń całą sekcję B i przejdź do **Włącz GitHub Pages**.
 
@@ -101,8 +121,18 @@ W repo → **Settings → Secrets and variables → Actions**:
 
 ## Pierwszy run
 
-**Actions → Refresh gallery → Run workflow**. Po sukcesie URL Pages
-wyświetli się w środowisku `github-pages`.
+**Actions → Refresh gallery → Run workflow**.
+
+Workflow ma dwa opcjonalne pola w „Run workflow":
+
+- **`root_folder_id`** — wklej ID folderu Drive żeby zeskanować
+  konkretny folder bez modyfikacji `GDRIVE_ROOT_FOLDER_ID`. Wygodne do
+  jednorazowych run-ów na różnych folderach albo do testów. Jeśli zostawisz
+  puste, użyje wartości variable.
+- **`limit`** — przerób tylko pierwsze N modeli (np. `5`). Dobre do szybkiego
+  sprawdzenia, że auth działa, bez czekania na pełny skan.
+
+Po sukcesie URL Pages wyświetli się w środowisku `github-pages`.
 
 ## Lokalne uruchomienie
 

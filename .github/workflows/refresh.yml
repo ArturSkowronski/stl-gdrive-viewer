@@ -4,6 +4,15 @@ on:
   schedule:
     - cron: "0 5 * * *"
   workflow_dispatch:
+    inputs:
+      root_folder_id:
+        description: "Drive folder ID to scan (overrides GDRIVE_ROOT_FOLDER_ID variable). Paste the ID from drive.google.com/drive/folders/<ID>."
+        required: false
+        type: string
+      limit:
+        description: "Limit to first N models (debug, leave empty for all)"
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -37,12 +46,18 @@ jobs:
           GOOGLE_OAUTH_CLIENT_ID: ${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}
           GOOGLE_OAUTH_CLIENT_SECRET: ${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}
           GOOGLE_OAUTH_REFRESH_TOKEN: ${{ secrets.GOOGLE_OAUTH_REFRESH_TOKEN }}
+          ROOT_FOLDER_ID: ${{ inputs.root_folder_id || vars.GDRIVE_ROOT_FOLDER_ID }}
+          LIMIT: ${{ inputs.limit }}
         run: |
-          python -m scanner.scan \
-            --root "${{ vars.GDRIVE_ROOT_FOLDER_ID }}" \
-            --out site/manifest.json \
-            --thumbs site/thumbs \
-            -v
+          if [ -z "$ROOT_FOLDER_ID" ]; then
+            echo "::error::No folder ID — set GDRIVE_ROOT_FOLDER_ID variable or pass root_folder_id input"
+            exit 1
+          fi
+          args=(--root "$ROOT_FOLDER_ID" --out site/manifest.json --thumbs site/thumbs -v)
+          if [ -n "$LIMIT" ]; then
+            args+=(--limit "$LIMIT")
+          fi
+          python -m scanner.scan "${args[@]}"
 
       - uses: actions/configure-pages@v5
 
