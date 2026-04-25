@@ -140,14 +140,24 @@ main {
   display: block;
   background: var(--border);
   overflow: hidden;
-  /* No fixed aspect ratio — image dictates height so portrait covers
-     (Batman, Asuka) take the full card width without letterbox bars. */
+  /* Mobile: image dictates height (full-bleed portrait without bars).
+     Desktop: see media query below — fixed 4:3 box for uniform alignment. */
 }
 
 .card img {
   width: 100%;
   height: auto;
   display: block;
+}
+
+@media (min-width: 720px) {
+  .card .thumb-wrap {
+    aspect-ratio: 4 / 3;
+  }
+  .card img {
+    height: 100%;
+    object-fit: contain;
+  }
 }
 
 .card .no-thumb {
