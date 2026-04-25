@@ -129,8 +129,10 @@ Workflow ma dwa opcjonalne pola w „Run workflow":
   konkretny folder bez modyfikacji `GDRIVE_ROOT_FOLDER_ID`. Wygodne do
   jednorazowych run-ów na różnych folderach albo do testów. Jeśli zostawisz
   puste, użyje wartości variable.
-- **`limit`** — przerób tylko pierwsze N modeli (np. `5`). Dobre do szybkiego
-  sprawdzenia, że auth działa, bez czekania na pełny skan.
+- **`limit`** — przerób tylko pierwsze N modeli. **Domyślnie `3`** (szybki
+  test przy ręcznych runach). Wyczyść pole, żeby zeskanować wszystko.
+  Cron leci zawsze bez limitu (pole `inputs.limit` jest puste dla
+  `schedule`).
 
 Po sukcesie URL Pages wyświetli się w środowisku `github-pages`.
 

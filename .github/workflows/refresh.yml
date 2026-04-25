@@ -10,9 +10,10 @@ on:
         required: false
         type: string
       limit:
-        description: "Limit to first N models (debug, leave empty for all)"
+        description: "Limit to first N models (debug, set empty for all)"
         required: false
         type: string
+        default: "3"
 
 permissions:
   contents: read
