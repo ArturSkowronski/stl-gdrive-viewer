@@ -223,20 +223,25 @@ def _visit(
 
     if pending_models:
         # I have non-generic descendants that already became models. I'm a GROUP.
-        # Distribute my own + bubbled-up images to those models ONLY when I'm
-        # a wrapper around a single model — otherwise (release folder with many
-        # unrelated characters) the same promo image would be glued to every
-        # card.
+        # Distribute my own + bubbled-up images down only when all child models
+        # represent the same character — single physical child, OR multiple
+        # variants whose display names collapse to the same string (Kratos
+        # split between Kratos_STL/ and Kratos_Presupport/, for example).
+        # Otherwise (release folder with many distinct characters) we'd glue
+        # one promo onto every card.
         my_images = list(direct_images)
         for _, r in sub_results:
             my_images.extend(r["all_images"])
-        if len(pending_models) == 1 and my_images:
-            pending_models[0].image_candidates.extend(my_images)
+        distinct_display = {m.display_name for m in pending_models}
+        if my_images and len(distinct_display) == 1:
+            for m in pending_models:
+                m.image_candidates.extend(my_images)
         elif my_images:
             log.info(
-                "group %s has %d direct image(s) but %d child models — "
-                "not distributing to avoid cross-pollution",
-                root_name, len(my_images), len(pending_models),
+                "group %s has %d direct image(s) but %d distinct child models "
+                "(%s) — not distributing to avoid cross-pollution",
+                root_name, len(my_images), len(distinct_display),
+                sorted(distinct_display),
             )
         for m in pending_models:
             if m.release is None and root_name and not name_is_generic and not is_root:
