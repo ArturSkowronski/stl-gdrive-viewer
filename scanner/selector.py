@@ -32,6 +32,15 @@ SATURATION_WEIGHT = 0.3
 # images — promo art is usually larger than thumbnails) and take the top N.
 MAX_SCORED_PER_MODEL = 6
 
+# Filenames matching this pattern are NomNom's intended cover art. They
+# short-circuit scoring entirely: largest matching file wins.
+import re as _re
+_BEAUTY_RE = _re.compile(r"beauty[\s_\-]*shot|beauty[\s_\-]*pic|^cover", _re.IGNORECASE)
+
+
+def _is_beauty_shot(name: str) -> bool:
+    return bool(_BEAUTY_RE.search(name))
+
 
 @dataclass
 class ScoredImage:
@@ -83,6 +92,25 @@ def pick_cover(client: DriveClient, model: Model) -> Optional[ScoredImage]:
     every candidate — better to show *some* picture than skip the model.
     """
     n_total = len(model.image_candidates)
+    if n_total == 0:
+        log.info("[%s] 0 image candidates", model.name)
+        return None
+
+    # Beauty shots (NomNom's own cover art) bypass scoring — pick the
+    # largest matching file and use it directly.
+    beauty = [f for f in model.image_candidates if _is_beauty_shot(f.name)]
+    if beauty:
+        beauty.sort(key=lambda f: f.size or 0, reverse=True)
+        chosen = beauty[0]
+        log.info("[%s] beauty shot found: %s — using it as cover", model.name, chosen.name)
+        try:
+            data = client.download_bytes(chosen.id, max_bytes=DOWNLOAD_HARD_CAP)
+            pil = Image.open(io.BytesIO(data))
+            pil = ImageOps.exif_transpose(pil).convert("RGB")
+            return ScoredImage(file=chosen, score=999.0, raw_bytes=data, pil_image=pil)
+        except Exception as e:
+            log.warning("[%s] beauty shot %s failed (%s) — falling back to scoring", model.name, chosen.name, e)
+
     # Score at most MAX_SCORED_PER_MODEL — pick the largest first since
     # promo art / beauty shots are usually larger than icon-style thumbs.
     candidates = sorted(
@@ -96,8 +124,6 @@ def pick_cover(client: DriveClient, model: Model) -> Optional[ScoredImage]:
         n,
         ", ".join(f.name for f in candidates) or "(none)",
     )
-    if n == 0:
-        return None
 
     scored: List[ScoredImage] = []
     fallback: Optional[ScoredImage] = None
