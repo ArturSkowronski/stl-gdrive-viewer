@@ -33,21 +33,23 @@ SATURATION_WEIGHT = 0.3
 # images — promo art is usually larger than thumbnails) and take the top N.
 MAX_SCORED_PER_MODEL = 6
 
-# Hard short-circuit: filenames with an explicit "this IS the cover"
-# label win without scoring.
+# Primary hard short-circuit — strongest "this IS the cover" labels.
 #   beauty shot / beauty pic
-#   cover (file starts with "cover")
 #   FinalRender (with optional separator)
 #   bare "Final" as the entire base name
-#   "BS" suffix followed by a number (NomNom's "Beauty Shot" abbreviation,
+#   "BS" suffix followed by a number (NomNom's Beauty Shot abbreviation,
 #    e.g. "BellBeast BS 01.jpg") — only when not preceded by a letter,
 #    so "ABS" / "TurntableBS" don't false-match.
 _BEAUTY_RE = _re.compile(
-    r"beauty[\s_\-]*shot|beauty[\s_\-]*pic|^cover|"
+    r"beauty[\s_\-]*shot|beauty[\s_\-]*pic|"
     r"final[\s_\-]*render|^final$|"
     r"(?<![a-zA-Z])bs[\s_\-]*\d",
     _re.IGNORECASE,
 )
+
+# Secondary hard short-circuit — used only when the primary set has no
+# matches. "Cover" and "Poster" are weaker hints.
+_COVER_RE = _re.compile(r"(?<![a-zA-Z])cover", _re.IGNORECASE)
 
 # Soft filter: filenames containing "final" or "render" as a word, or
 # matching the folder name. These narrow the candidate pool that goes to
@@ -56,6 +58,10 @@ _BEAUTY_RE = _re.compile(
 # also tend to match these labels and used to dominate by file size.
 _FINAL_RE = _re.compile(r"(?<![a-z])final|final(?![a-z])", _re.IGNORECASE)
 _RENDER_RE = _re.compile(r"(?<![a-z])render|render(?![a-z])", _re.IGNORECASE)
+# "Poster NN" / "Poster_NN" / "Poster.jpg" — NomNom's secondary cover
+# convention. Lower precedence than the hard-pick set: only used when no
+# Beauty/BS/FinalRender/Final/Cover/FolderName match exists.
+_POSTER_RE = _re.compile(r"(?<![a-zA-Z])poster", _re.IGNORECASE)
 # Clean single-word filename like Triss.jpg, Geralt.jpg — a deliberate
 # character-name file. Match only the bare base, ≥3 letters, no digits.
 _PROPER_NOUN_RE = _re.compile(r"^[A-Z][a-zA-Z]{2,}$")
@@ -83,7 +89,8 @@ def _series_number(filename: str) -> int:
 
 def _is_hard_pick(filename: str, model_name: str) -> bool:
     """Files that bypass scoring entirely:
-      - "Beauty shot" / "cover" / "FinalRender" labels (via _BEAUTY_RE)
+      - "Beauty shot" / "cover" / "FinalRender" / "Final" / "BS NN"
+        labels (via _BEAUTY_RE)
       - Filename that is a single clean proper-noun matching a token of
         the model folder name (Geralt.jpg in a Geralt folder).
     """
@@ -94,6 +101,16 @@ def _is_hard_pick(filename: str, model_name: str) -> bool:
         if base.lower() in _name_tokens(model_name):
             return True
     return False
+
+
+def _is_secondary_pick(filename: str) -> bool:
+    """Secondary hard-pick — only consulted when nothing matches the
+    primary set. Covers NomNom's softer cover conventions:
+      - "Poster_01.jpg" / "Poster.jpg"
+      - "cover.jpg" / "Foo_Cover.jpg"
+    """
+    base = filename.rsplit(".", 1)[0]
+    return bool(_POSTER_RE.search(base) or _COVER_RE.search(base))
 
 
 def _name_tokens(s: str) -> set[str]:
@@ -188,9 +205,9 @@ def pick_cover(client: DriveClient, model: Model) -> Optional[ScoredImage]:
         log.info("[%s] 0 image candidates", model.name)
         return None
 
-    # Hard short-circuit: explicit cover labels (Beauty shot / cover /
-    # FinalRender / Final / FolderName.jpg) bypass scoring. Within the
-    # hard-pick set we prefer the lowest series number ("BS 01" beats
+    # Hard short-circuit (primary): explicit cover labels (Beauty shot /
+    # cover / FinalRender / Final / BS NN / FolderName.jpg) bypass scoring.
+    # Within the set we prefer the lowest series number ("BS 01" beats
     # "BS 02") with file size as a tiebreaker.
     hard = [f for f in model.image_candidates if _is_hard_pick(f.name, model.name)]
     if hard:
@@ -204,6 +221,21 @@ def pick_cover(client: DriveClient, model: Model) -> Optional[ScoredImage]:
             return ScoredImage(file=chosen, score=999.0, raw_bytes=data, pil_image=pil)
         except Exception as e:
             log.warning("[%s] hard pick %s failed (%s) — falling back to scoring", model.name, chosen.name, e)
+
+    # Hard short-circuit (secondary): "cover" / "Poster NN" / "Poster.jpg"
+    # — only checked when nothing matches the primary set above.
+    secondary = [f for f in model.image_candidates if _is_secondary_pick(f.name)]
+    if secondary:
+        secondary.sort(key=lambda f: (_series_number(f.name), -(f.size or 0)))
+        chosen = secondary[0]
+        log.info("[%s] secondary pick: %s — using directly", model.name, chosen.name)
+        try:
+            data = _fetch_image(client, chosen)
+            pil = Image.open(io.BytesIO(data))
+            pil = ImageOps.exif_transpose(pil).convert("RGB")
+            return ScoredImage(file=chosen, score=999.0, raw_bytes=data, pil_image=pil)
+        except Exception as e:
+            log.warning("[%s] secondary %s failed (%s) — falling back to scoring", model.name, chosen.name, e)
 
     # Filter pool: if any filenames carry a hint (final / render / folder
     # name token), score only those — bias toward labelled images. If none,
