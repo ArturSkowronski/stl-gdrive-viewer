@@ -1,5 +1,7 @@
 # STL Gallery (Google Drive → GitHub Pages)
 
+**Live: https://arturskowronski.github.io/stl-gdrive-viewer/**
+
 Statyczna galeria modeli 3D z Twojego Google Drive. Skaner uruchamiany przez
 GitHub Actions raz dziennie schodzi po drzewie folderów (z obsługą skrótów
 Drive), wybiera dla każdego modelu „pomalowane" zdjęcie (scoring kolorowości)
