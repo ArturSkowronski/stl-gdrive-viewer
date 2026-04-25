@@ -97,6 +97,29 @@ _PRESUPPORTED_RE = _re.compile(
     _re.IGNORECASE,
 )
 
+# Saturn 4 Ultra optimization marker — only the unambiguous forms.
+# Generic "Saturn" is too noisy (Saturn 1/2/3 also exist, plus non-printer
+# meanings); generic "Elegoo" / "12K" / "ChituBox" cover too many printers.
+# We require either the full "Saturn 4 Ultra" string or the precise
+# abbreviation "S4U" (also seen in Elegoo's part number EL-3D-S4U).
+# Lookarounds use [A-Za-z0-9] (not \b, which treats `_` as a word char) so
+# "S4U_Presupported.stl" matches but "TrissS4Ultra.stl" doesn't.
+_SATURN_RE = _re.compile(
+    r"(?<![A-Za-z0-9])(?:"
+    r"saturn[\s_\-]*4[\s_\-]*ultra"
+    r"|s4u"
+    r"|el[\s_\-]?3d[\s_\-]?s4u"
+    r")(?![A-Za-z0-9])",
+    _re.IGNORECASE,
+)
+
+# Pre-sliced resin formats. A `.ctb` or `.goo` file is *almost certainly*
+# meant for a specific printer — but we only flag it as Saturn-optimized
+# when its filename or one of its ancestor folders carries an explicit
+# Saturn marker, since both formats are slicer-format-compatible across
+# the Elegoo / Anycubic family.
+_SLICED_EXTS = (".ctb", ".goo")
+
 
 def _is_beauty_shot(name: str) -> bool:
     return bool(_BEAUTY_RE.search(name))
@@ -142,6 +165,21 @@ def _is_semi_product_stl(filename: str) -> bool:
     from the per-card file list."""
     base = filename.rsplit(".", 1)[0]
     return bool(_SEMI_PRODUCT_STL_RE.search(base))
+
+
+def _is_saturn_optimized(filename: str, parent_chain: Optional[List[str]] = None) -> bool:
+    """True when a file is unambiguously labelled as targeting the Elegoo
+    Saturn 4 Ultra — either via its own basename or via any folder name in
+    its ancestor chain (so a `Saturn 4 Ultra/Presupports/STL/foo.stl` file
+    gets flagged even though its immediate parent is just `STL`).
+    """
+    base = filename.rsplit(".", 1)[0]
+    if _SATURN_RE.search(base):
+        return True
+    for folder in parent_chain or []:
+        if folder and _SATURN_RE.search(folder):
+            return True
+    return False
 
 
 def _is_presupported_stl(filename: str, parent_folder_name: str) -> bool:

@@ -295,6 +295,47 @@ def test_archive_files_are_treated_as_stls():
     assert [s.file.name for s in m.stl_candidates] == ["Geralt_STL.7z"]
 
 
+def test_pre_sliced_resin_files_are_treated_as_stls():
+    """`.ctb` (ChituBox) and `.goo` (Elegoo native) are pre-sliced resin
+    formats — surface them so users can grab the printer-ready file
+    instead of re-slicing the STL."""
+    tree = {
+        "root": [_FakeFile("geralt", "Geralt", is_folder=True)],
+        "geralt": [
+            _FakeFile("g_ctb", "Geralt_S4U.ctb"),
+            _FakeFile("g_goo", "Geralt.goo"),
+            _FakeFile("g_cover", "Geralt.jpg", image=True),
+        ],
+    }
+    models = _walk(tree)
+    assert len(models) == 1
+    names = sorted(s.file.name for s in models[0].stl_candidates)
+    assert names == ["Geralt.goo", "Geralt_S4U.ctb"]
+
+
+def test_stl_entry_parent_chain_includes_all_ancestors():
+    """parent_chain on each StlEntry must contain every folder name from
+    the root down to the immediate parent — used by the Saturn detector
+    to spot markers that sit several levels above the file."""
+    tree = {
+        "root": [_FakeFile("apr", "April 2026 Release", is_folder=True)],
+        "apr": [_FakeFile("s4u", "Saturn 4 Ultra", is_folder=True)],
+        "s4u": [_FakeFile("geralt", "Geralt", is_folder=True)],
+        "geralt": [_FakeFile("pre", "Presupports", is_folder=True)],
+        "pre": [_FakeFile("stl", "STL", is_folder=True)],
+        "stl": [_FakeFile("g_file", "geralt.stl", stl=True)],
+    }
+    models = _walk(tree)
+    assert len(models) == 1
+    m = models[0]
+    assert len(m.stl_candidates) == 1
+    chain = m.stl_candidates[0].parent_chain
+    # Chain should include every ancestor folder back to (but excluding)
+    # the Drive root, with the immediate parent (`STL`) at the end.
+    assert "Saturn 4 Ultra" in chain
+    assert chain[-1] == "STL"
+
+
 def test_folder_with_neither_stl_nor_archive_skipped():
     tree = {
         "root": [_FakeFile("lore", "Lore", is_folder=True)],

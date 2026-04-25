@@ -205,10 +205,47 @@ page) so the file's existing permissions decide whether the viewer can
 download. Public files behave like a download link; private files prompt
 for login. This is intentional licence-wise (NomNom owns the models).
 
-Archives (`.7z`/`.zip`/`.rar`) count as "model files" alongside `.stl`.
-The frontend shows each STL as its own button with filename + size; the
-first 5 inline, rest behind a `+ N więcej` `<details>` toggle. Within a
-model, presupported variants come first, then largest first.
+Archives (`.7z`/`.zip`/`.rar`) and pre-sliced resin formats
+(`.ctb` ChituBox, `.goo` Elegoo native) count as "model files" alongside
+`.stl`. Each model exposes them through a single `<select>` dropdown
+plus a "Pobierz" button — presupported variants are tagged with `★`,
+Saturn-4-Ultra-optimized files with `[Saturn]`. A separate
+`Folder na Drive ↗` link covers the "give me everything" case. Within
+the dropdown, presupported variants come first, then largest first.
+
+Semi-product files (`test`, `sample`, `demo`, `preview`, `WIP`,
+`calibration`, `cut_test`, `stress_test`, `temple`, `benchmark`,
+`bench_print` as standalone tokens) are stripped from the per-card
+list — those are tooling, not figures. Filter lives in
+`selector._is_semi_product_stl`; if every STL in a model matches, the
+filter is bypassed so we never empty out a card.
+
+## Saturn 4 Ultra detection
+
+`scanner/selector._is_saturn_optimized(filename, parent_chain)` flags
+files that target the Elegoo Saturn 4 Ultra specifically. The regex is
+intentionally strict — generic "Saturn", "Elegoo", "12K", "ChituBox"
+all match too many printers and would create false positives:
+
+  - Match: `Saturn 4 Ultra` (any separator), `S4U`, `EL-3D-S4U`
+  - No match: `Saturn 3 Ultra`, bare `Saturn`, `Mars 4 Ultra`, `12K`,
+    `Elegoo`, `ChituBox profile`
+  - No substring matches: lookarounds use `[A-Za-z0-9]` (not `\b`,
+    which treats `_` as a word char) so `S4U_Presupported.stl` matches
+    but `TrissS4Ultra.stl` and `AlbatrossS4U.stl` don't.
+
+The detector consults the file's full ancestor chain
+(`StlEntry.parent_chain`), not just the immediate parent — a marker on
+`Saturn 4 Ultra/Presupports/STL/foo.stl` propagates to the file even
+though the immediate parent is just `STL`.
+
+Manifest exposes `saturn_optimized: bool` per STL and per model; the
+frontend uses it to render a `[Saturn]` prefix on dropdown options, an
+amber `Saturn optimized` chip on the card, and a `Tylko Saturn 4 Ultra`
+filter button in the toolbar (auto-hidden when the manifest contains
+zero Saturn-flagged models). **Don't broaden the regex without a
+test** — the same revert/redo cycle that bit the cover heuristics
+applies here.
 
 ## Frontend
 

@@ -284,3 +284,44 @@ def test_is_semi_product_stl(filename, expected):
 ])
 def test_is_presupported_stl(filename, parent, expected):
     assert selector._is_presupported_stl(filename, parent) is expected
+
+
+# --- _is_saturn_optimized --------------------------------------------
+
+
+@pytest.mark.parametrize("filename,chain,expected", [
+    # Filename carries the marker
+    ("Geralt_Saturn4Ultra.stl", [], True),
+    ("Geralt_Saturn_4_Ultra.stl", [], True),
+    ("Geralt_Saturn 4 Ultra.stl", [], True),
+    ("Geralt_Saturn-4-Ultra.ctb", [], True),
+    ("Geralt_S4U.stl", [], True),
+    ("Geralt_S4U_Presupported.stl", [], True),
+    ("S4U_Geralt.stl", [], True),
+    ("EL-3D-S4U_Pack.7z", [], True),
+    # Folder anywhere up the chain carries the marker
+    ("Geralt.stl", ["April 2026", "Saturn 4 Ultra"], True),
+    ("Geralt.stl", ["S4U", "Presupports", "STL"], True),
+    ("Geralt.ctb", ["April 2026", "Geralt", "ChituBox", "Saturn4Ultra"], True),
+    # Negatives — generic Saturn / Elegoo / 12K must NOT auto-flag
+    ("Geralt.stl", ["Saturn 3 Ultra"], False),  # different model
+    ("Geralt.stl", ["Saturn"], False),  # bare Saturn ambiguous
+    ("Geralt.stl", ["12K"], False),  # resolution class, not printer
+    ("Geralt.stl", ["Elegoo"], False),  # vendor, multiple printers
+    ("Geralt.stl", ["ChituBox profile"], False),  # universal slicer format
+    ("Geralt.stl", ["Mars 4 Ultra"], False),  # different printer
+    # Negatives — substring false-positives
+    ("Triss_S4Ultra.stl", [], False),  # S4Ultra without separator/end-of-token
+    ("AlbatrossS4U.stl", [], False),  # preceded by letter
+    ("S4USA_meeting.stl", [], False),  # followed by letter
+    ("SaturnRing.stl", [], False),  # not "saturn 4 ultra"
+    ("Geralt.stl", ["My Saturn collection"], False),  # bare "Saturn" doesn't match
+    ("Geralt.stl", [], False),
+])
+def test_is_saturn_optimized(filename, chain, expected):
+    assert selector._is_saturn_optimized(filename, chain) is expected
+
+
+def test_is_saturn_optimized_chain_can_be_none():
+    assert selector._is_saturn_optimized("Geralt_S4U.stl", None) is True
+    assert selector._is_saturn_optimized("Geralt.stl", None) is False

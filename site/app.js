@@ -5,11 +5,13 @@ const state = {
   releases: [],
   query: "",
   release: ALL,
+  saturnOnly: false,
 };
 
 const $grid = document.getElementById("grid");
 const $search = document.getElementById("search");
 const $releases = document.getElementById("releases");
+const $saturnFilter = document.getElementById("saturn-filter");
 const $status = document.getElementById("status");
 const $meta = document.getElementById("meta");
 
@@ -52,6 +54,7 @@ function filtered() {
   const q = state.query.trim().toLowerCase();
   return state.models.filter((m) => {
     if (state.release !== ALL && m.release !== state.release) return false;
+    if (state.saturnOnly && !m.saturn_optimized) return false;
     if (!q) return true;
     return (
       m.name.toLowerCase().includes(q) ||
@@ -68,14 +71,18 @@ function fmtSize(bytes) {
 
 function renderStlPicker(stls) {
   // Dropdown: pick a file, "Pobierz" opens it in a new tab.
-  // Presupported variants are flagged with a star so the user-friendly
-  // option is obvious at a glance. The folder link sits separately so
-  // "give me everything" stays a one-tap action.
+  // Presupported variants get a ★ prefix; Saturn-4-Ultra-optimized files
+  // get a [Saturn] prefix so users with that printer can spot them at a
+  // glance. The folder link sits separately so "give me everything" stays
+  // a one-tap action.
   const opts = stls
     .map((s, i) => {
-      const star = s.presupported ? "★ " : "";
+      const tags = [];
+      if (s.presupported) tags.push("★");
+      if (s.saturn_optimized) tags.push("[Saturn]");
+      const prefix = tags.length ? tags.join(" ") + " " : "";
       const size = s.size ? ` — ${fmtSize(s.size)}` : "";
-      return `<option value="${i}">${escapeHTML(star + s.name + size)}</option>`;
+      return `<option value="${i}">${escapeHTML(prefix + s.name + size)}</option>`;
     })
     .join("");
   const word = plPlural(stls.length, "plik", "pliki", "plików");
@@ -93,13 +100,19 @@ function renderCard(m) {
     : `<div class="no-thumb" aria-label="brak miniatury">${escapeHTML((m.name[0] || "?").toUpperCase())}</div>`;
   const thumbHref = primary ? primary.view_url : m.folder_url;
   const stlPicker = stls.length ? renderStlPicker(stls) : "";
+  const saturnBadge = m.saturn_optimized
+    ? `<span class="saturn-badge" title="Pliki przygotowane pod Elegoo Saturn 4 Ultra">Saturn optimized</span>`
+    : "";
   return `
-    <li class="card" data-model-id="${escapeHTML(m.id)}">
+    <li class="card${m.saturn_optimized ? " is-saturn" : ""}" data-model-id="${escapeHTML(m.id)}">
       <a class="thumb-wrap" href="${escapeHTML(thumbHref)}" target="_blank" rel="noopener">
         ${thumbInner}
       </a>
       <div class="body">
-        ${release}
+        <div class="card-tags">
+          ${release}
+          ${saturnBadge}
+        </div>
         <h2>${escapeHTML(m.name)}</h2>
         <div class="actions">
           <div class="stl-picker">
@@ -172,7 +185,13 @@ async function load() {
       const d = new Date(data.generated_at);
       const n = state.models.length;
       const word = plPlural(n, "model", "modele", "modeli");
-      $meta.textContent = `Aktualizacja: ${d.toLocaleString()} · ${n} ${word}`;
+      const sat = state.models.filter((m) => m.saturn_optimized).length;
+      const satNote = sat ? ` · ${sat} Saturn-ready` : "";
+      $meta.textContent = `Aktualizacja: ${d.toLocaleString()} · ${n} ${word}${satNote}`;
+    }
+    if ($saturnFilter) {
+      const hasSaturn = state.models.some((m) => m.saturn_optimized);
+      $saturnFilter.hidden = !hasSaturn;
     }
   } catch (err) {
     $grid.innerHTML = "";
@@ -188,5 +207,13 @@ $search.addEventListener("input", () => {
   state.query = $search.value;
   renderGrid();
 });
+
+if ($saturnFilter) {
+  $saturnFilter.addEventListener("click", () => {
+    state.saturnOnly = !state.saturnOnly;
+    $saturnFilter.setAttribute("aria-pressed", String(state.saturnOnly));
+    renderGrid();
+  });
+}
 
 load();
