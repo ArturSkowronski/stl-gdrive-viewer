@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="pl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>STL Gallery</title>
+  <link rel="preload" href="manifest.json" as="fetch" crossorigin="anonymous">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="toolbar">
+    <h1>STL Gallery</h1>
+    <input
+      id="search"
+      type="search"
+      placeholder="Szukaj modelu…"
+      autocomplete="off"
+      spellcheck="false">
+    <div id="releases" class="chips" aria-label="Filtruj po release"></div>
+  </header>
+
+  <main>
+    <p id="status" class="status" hidden></p>
+    <ul id="grid" class="grid" aria-busy="true">
+      <li class="card skeleton"></li>
+      <li class="card skeleton"></li>
+      <li class="card skeleton"></li>
+      <li class="card skeleton"></li>
+      <li class="card skeleton"></li>
+      <li class="card skeleton"></li>
+    </ul>
+  </main>
+
+  <footer>
+    <span id="meta"></span>
+  </footer>
+
+  <script src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,14 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+.env
+
+client_secret.json
+*-credentials.json
+token.json
+
+site/manifest.json
+site/thumbs/
+
+.DS_Store
