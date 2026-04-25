@@ -119,38 +119,45 @@ def main() -> int:
     manifest_models = []
     skipped_no_cover: list[str] = []
     skipped_no_stl: list[str] = []
+    crashed: list[str] = []
     for m in models:
-        cover = pick_cover(client, m)
-        stl = pick_stl(m)
-        if not cover:
-            logging.warning("skip %s — no usable cover image", m.name)
-            skipped_no_cover.append(m.name)
-            continue
-        if not stl:
-            logging.warning("skip %s — no STL", m.name)
-            skipped_no_stl.append(m.name)
-            continue
+        try:
+            cover = pick_cover(client, m)
+            stl = pick_stl(m)
+            if not stl:
+                logging.warning("skip %s — no STL", m.name)
+                skipped_no_stl.append(m.name)
+                continue
 
-        thumb_dest = thumb_path(thumbs_dir, m.name, cover.file.id)
-        write_thumb(cover.pil_image, thumb_dest)
-        thumb_rel = thumb_dest.relative_to(out_path.parent).as_posix()
+            if cover:
+                thumb_dest = thumb_path(thumbs_dir, m.name, cover.file.id)
+                write_thumb(cover.pil_image, thumb_dest)
+                thumb_rel: Optional[str] = thumb_dest.relative_to(out_path.parent).as_posix()
+            else:
+                logging.warning("%s has no cover — emitting card without thumbnail", m.name)
+                skipped_no_cover.append(m.name)
+                thumb_rel = None
 
-        manifest_models.append(
-            {
-                "id": m.folder_id,
-                "name": m.display_name,
-                "release": m.release,
-                "folder_url": m.web_view_link,
-                "thumb": thumb_rel,
-                "stl": {
-                    "file_id": stl.file.id,
-                    "name": stl.file.name,
-                    "size": stl.file.size,
-                    "view_url": stl.file.web_view_link or _stl_view_url(stl.file.id),
-                },
-                "stl_count": len(m.stl_candidates),
-            }
-        )
+            manifest_models.append(
+                {
+                    "id": m.folder_id,
+                    "name": m.display_name,
+                    "release": m.release,
+                    "folder_url": m.web_view_link,
+                    "thumb": thumb_rel,
+                    "stl": {
+                        "file_id": stl.file.id,
+                        "name": stl.file.name,
+                        "size": stl.file.size,
+                        "view_url": stl.file.web_view_link or _stl_view_url(stl.file.id),
+                    },
+                    "stl_count": len(m.stl_candidates),
+                }
+            )
+        except Exception as e:
+            logging.exception("crash processing model %s: %s — keeping run alive", m.name, e)
+            crashed.append(m.name)
+            continue
 
     manifest_models.sort(
         key=lambda mm: (_release_sort_key(mm["release"]), mm["name"].lower())
@@ -173,13 +180,15 @@ def main() -> int:
     total = len(models)
     written = len(manifest_models)
     logging.warning(
-        "summary: %d candidates -> %d written, %d skipped (no cover), %d skipped (no STL)",
-        total, written, len(skipped_no_cover), len(skipped_no_stl),
+        "summary: %d candidates -> %d written, %d without cover (still shown), %d skipped (no STL), %d crashed",
+        total, written, len(skipped_no_cover), len(skipped_no_stl), len(crashed),
     )
     if skipped_no_cover:
-        logging.warning("skipped (no cover): %s", ", ".join(skipped_no_cover))
+        logging.warning("emitted without cover: %s", ", ".join(skipped_no_cover))
     if skipped_no_stl:
         logging.warning("skipped (no STL): %s", ", ".join(skipped_no_stl))
+    if crashed:
+        logging.warning("crashed: %s", ", ".join(crashed))
     logging.info("wrote manifest with %d models to %s", written, out_path)
     return 0
 

@@ -72,10 +72,13 @@ function renderCard(m) {
       : `<a class="folder-link" href="${escapeHTML(m.folder_url)}" target="_blank" rel="noopener">
            Cały folder na Drive
          </a>`;
+  const thumbInner = m.thumb
+    ? `<img src="${escapeHTML(m.thumb)}" alt="${escapeHTML(m.name)}" loading="lazy">`
+    : `<div class="no-thumb" aria-label="brak miniatury">${escapeHTML((m.name[0] || "?").toUpperCase())}</div>`;
   return `
     <li class="card">
       <a class="thumb-wrap" href="${escapeHTML(m.stl.view_url)}" target="_blank" rel="noopener">
-        <img src="${escapeHTML(m.thumb)}" alt="${escapeHTML(m.name)}" loading="lazy">
+        ${thumbInner}
       </a>
       <div class="body">
         ${release}
