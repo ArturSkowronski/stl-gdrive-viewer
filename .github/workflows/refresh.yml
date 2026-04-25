@@ -9,6 +9,7 @@ on:
         description: "Drive folder ID to scan (overrides GDRIVE_ROOT_FOLDER_ID variable). Paste the ID from drive.google.com/drive/folders/<ID>."
         required: false
         type: string
+        default: "15F2OsqqekNu3C8MpdhMtsAcuZl5OwCDX"
       limit:
         description: "Limit to first N models (debug, set empty for all)"
         required: false
