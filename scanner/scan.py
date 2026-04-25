@@ -16,12 +16,12 @@ from typing import Optional
 if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
     from scanner.drive import DriveClient  # noqa: E402
-    from scanner.selector import pick_cover, pick_stl  # noqa: E402
+    from scanner.selector import pick_cover, pick_stls  # noqa: E402
     from scanner.thumbs import thumb_path, write_thumb  # noqa: E402
     from scanner.walker import walk  # noqa: E402
 else:
     from .drive import DriveClient
-    from .selector import pick_cover, pick_stl
+    from .selector import pick_cover, pick_stls
     from .thumbs import thumb_path, write_thumb
     from .walker import walk
 
@@ -123,8 +123,8 @@ def main() -> int:
     for m in models:
         try:
             cover = pick_cover(client, m)
-            stl = pick_stl(m)
-            if not stl:
+            stls = pick_stls(m)
+            if not stls:
                 logging.warning("skip %s — no STL", m.name)
                 skipped_no_stl.append(m.name)
                 continue
@@ -145,13 +145,16 @@ def main() -> int:
                     "release": m.release,
                     "folder_url": m.web_view_link,
                     "thumb": thumb_rel,
-                    "stl": {
-                        "file_id": stl.file.id,
-                        "name": stl.file.name,
-                        "size": stl.file.size,
-                        "view_url": stl.file.web_view_link or _stl_view_url(stl.file.id),
-                    },
-                    "stl_count": len(m.stl_candidates),
+                    "stls": [
+                        {
+                            "file_id": s.file.id,
+                            "name": s.file.name,
+                            "size": s.file.size,
+                            "view_url": s.file.web_view_link or _stl_view_url(s.file.id),
+                            "presupported": "presupported" in s.parent_folder_name.lower(),
+                        }
+                        for s in stls
+                    ],
                 }
             )
         except Exception as e:

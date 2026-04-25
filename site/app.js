@@ -60,34 +60,59 @@ function filtered() {
   });
 }
 
+function fmtSize(bytes) {
+  if (!bytes) return "";
+  const mb = bytes / 1_000_000;
+  return mb >= 1 ? `${mb.toFixed(1)} MB` : `${(bytes / 1000).toFixed(0)} KB`;
+}
+
+function renderStlButtons(stls) {
+  // Show first 5 inline; rest behind a "show more" toggle.
+  const VISIBLE = 5;
+  const visible = stls.slice(0, VISIBLE);
+  const hidden = stls.slice(VISIBLE);
+  const btn = (s) => `
+    <a class="stl-button${s.presupported ? " is-presupported" : ""}"
+       href="${escapeHTML(s.view_url)}"
+       target="_blank" rel="noopener"
+       title="${escapeHTML(s.name)}">
+      <span class="stl-name">${escapeHTML(s.name)}</span>
+      <span class="stl-size">${escapeHTML(fmtSize(s.size))}</span>
+    </a>`;
+  let html = visible.map(btn).join("");
+  if (hidden.length) {
+    html += `
+      <details class="stl-more">
+        <summary>+ ${hidden.length} więcej</summary>
+        ${hidden.map(btn).join("")}
+      </details>`;
+  }
+  return html;
+}
+
 function renderCard(m) {
   const release = m.release
     ? `<span class="release-chip">${escapeHTML(m.release)}</span>`
     : "";
-  const stlExtra =
-    m.stl_count > 1
-      ? `<a class="folder-link" href="${escapeHTML(m.folder_url)}" target="_blank" rel="noopener">
-           Cały folder na Drive (${m.stl_count} plików STL)
-         </a>`
-      : `<a class="folder-link" href="${escapeHTML(m.folder_url)}" target="_blank" rel="noopener">
-           Cały folder na Drive
-         </a>`;
+  const stls = m.stls || [];
+  const primary = stls[0];
   const thumbInner = m.thumb
     ? `<img src="${escapeHTML(m.thumb)}" alt="${escapeHTML(m.name)}" loading="lazy">`
     : `<div class="no-thumb" aria-label="brak miniatury">${escapeHTML((m.name[0] || "?").toUpperCase())}</div>`;
+  const thumbHref = primary ? primary.view_url : m.folder_url;
   return `
     <li class="card">
-      <a class="thumb-wrap" href="${escapeHTML(m.stl.view_url)}" target="_blank" rel="noopener">
+      <a class="thumb-wrap" href="${escapeHTML(thumbHref)}" target="_blank" rel="noopener">
         ${thumbInner}
       </a>
       <div class="body">
         ${release}
         <h2>${escapeHTML(m.name)}</h2>
         <div class="actions">
-          <a class="button" href="${escapeHTML(m.stl.view_url)}" target="_blank" rel="noopener">
-            Otwórz STL na Drive
+          ${renderStlButtons(stls)}
+          <a class="folder-link" href="${escapeHTML(m.folder_url)}" target="_blank" rel="noopener">
+            Cały folder na Drive
           </a>
-          ${stlExtra}
         </div>
       </div>
     </li>`;

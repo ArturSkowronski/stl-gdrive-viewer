@@ -172,29 +172,32 @@ def pick_cover(client: DriveClient, model: Model) -> Optional[ScoredImage]:
     return fallback
 
 
-def pick_stl(model: Model) -> Optional[StlEntry]:
-    """Pick the most useful STL: presupported preferred, then largest."""
+def pick_stls(model: Model) -> List[StlEntry]:
+    """Return all STLs sorted: presupported variants first (largest first),
+    then the rest (largest first). Empty list means no STLs in this model."""
     n = len(model.stl_candidates)
     if n == 0:
         log.warning("[%s] no STL files in subtree", model.name)
-        return None
+        return []
 
-    presupported = [
-        s for s in model.stl_candidates if "presupported" in s.parent_folder_name.lower()
-    ]
-    pool = presupported if presupported else model.stl_candidates
-    pool_label = "presupported" if presupported else "any"
-    pool_sorted = sorted(
-        pool,
+    def _is_presupported(s: StlEntry) -> bool:
+        return "presupported" in s.parent_folder_name.lower()
+
+    presupported = sorted(
+        (s for s in model.stl_candidates if _is_presupported(s)),
         key=lambda s: (s.file.size or 0),
         reverse=True,
     )
-    chosen = pool_sorted[0]
-    log.info(
-        "[%s] picked STL %s (%s, %d/%d candidates from '%s' pool)",
-        model.name,
-        chosen.file.name,
-        f"{(chosen.file.size or 0)/1_000_000:.1f}MB",
-        1, len(pool), pool_label,
+    rest = sorted(
+        (s for s in model.stl_candidates if not _is_presupported(s)),
+        key=lambda s: (s.file.size or 0),
+        reverse=True,
     )
-    return chosen
+    ordered = presupported + rest
+    log.info(
+        "[%s] %d STL(s): %d presupported, %d other; first = %s (%s)",
+        model.name, n, len(presupported), len(rest),
+        ordered[0].file.name,
+        f"{(ordered[0].file.size or 0)/1_000_000:.1f}MB",
+    )
+    return ordered
