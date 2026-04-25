@@ -32,14 +32,41 @@ SATURATION_WEIGHT = 0.3
 # images — promo art is usually larger than thumbnails) and take the top N.
 MAX_SCORED_PER_MODEL = 6
 
-# Filenames matching this pattern are NomNom's intended cover art. They
-# short-circuit scoring entirely: largest matching file wins.
+# Filenames matching this pattern are obvious cover art. They short-circuit
+# scoring entirely: largest matching file wins.
 import re as _re
-_BEAUTY_RE = _re.compile(r"beauty[\s_\-]*shot|beauty[\s_\-]*pic|^cover", _re.IGNORECASE)
+
+_OBVIOUS_RE = _re.compile(
+    r"beauty[\s_\-]*shot|beauty[\s_\-]*pic|^cover|(?<![a-z])final(?![a-z])",
+    _re.IGNORECASE,
+)
+# Tokens we ignore when matching folder name to filename — they're too
+# generic and would create false positives (e.g. "stl" appearing in both).
+_NAME_STOPWORDS = {
+    "stl", "stls", "bust", "busts", "scale", "miniature", "miniatures",
+    "render", "renders", "image", "images", "model", "the", "and", "for",
+    "from", "presupported", "unsupported",
+}
 
 
-def _is_beauty_shot(name: str) -> bool:
-    return bool(_BEAUTY_RE.search(name))
+def _name_tokens(s: str) -> set[str]:
+    return {
+        t.lower()
+        for t in _re.findall(r"[A-Za-z]+", s)
+        if len(t) >= 3 and t.lower() not in _NAME_STOPWORDS
+    }
+
+
+def _is_obvious_cover(filename: str, model_name: str) -> bool:
+    """True if a filename clearly identifies cover art for this model:
+    matches "beauty shot" / "cover" / "final", or shares a meaningful
+    token with the model's folder name (e.g. "Link.jpg" for "Link/")."""
+    base = filename.rsplit(".", 1)[0]
+    if _OBVIOUS_RE.search(base):
+        return True
+    file_toks = _name_tokens(base)
+    name_toks = _name_tokens(model_name)
+    return bool(file_toks & name_toks)
 
 
 @dataclass
@@ -104,20 +131,23 @@ def pick_cover(client: DriveClient, model: Model) -> Optional[ScoredImage]:
         log.info("[%s] 0 image candidates", model.name)
         return None
 
-    # Beauty shots (NomNom's own cover art) bypass scoring — pick the
-    # largest matching file and use it directly.
-    beauty = [f for f in model.image_candidates if _is_beauty_shot(f.name)]
-    if beauty:
-        beauty.sort(key=lambda f: f.size or 0, reverse=True)
-        chosen = beauty[0]
-        log.info("[%s] beauty shot found: %s — using it as cover", model.name, chosen.name)
+    # Obvious cover art (NomNom's "Beauty shot.jpg", "Final.jpg", or files
+    # named after the character like "Link.jpg" in the Link folder)
+    # short-circuits scoring entirely.
+    obvious = [
+        f for f in model.image_candidates if _is_obvious_cover(f.name, model.name)
+    ]
+    if obvious:
+        obvious.sort(key=lambda f: f.size or 0, reverse=True)
+        chosen = obvious[0]
+        log.info("[%s] obvious cover: %s — using directly", model.name, chosen.name)
         try:
             data = _fetch_image(client, chosen)
             pil = Image.open(io.BytesIO(data))
             pil = ImageOps.exif_transpose(pil).convert("RGB")
             return ScoredImage(file=chosen, score=999.0, raw_bytes=data, pil_image=pil)
         except Exception as e:
-            log.warning("[%s] beauty shot %s failed (%s) — falling back to scoring", model.name, chosen.name, e)
+            log.warning("[%s] obvious %s failed (%s) — falling back to scoring", model.name, chosen.name, e)
 
     # Score at most MAX_SCORED_PER_MODEL — pick the largest first since
     # promo art / beauty shots are usually larger than icon-style thumbs.
