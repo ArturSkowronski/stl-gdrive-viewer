@@ -73,6 +73,14 @@ def _is_beauty_shot(name: str) -> bool:
     return bool(_BEAUTY_RE.search(name))
 
 
+def _series_number(filename: str) -> int:
+    """Last numeric token in the filename, used to sort BS 01 ahead of
+    BS 02. Files with no number sort last."""
+    base = filename.rsplit(".", 1)[0]
+    nums = _re.findall(r"\d+", base)
+    return int(nums[-1]) if nums else 999_999
+
+
 def _is_hard_pick(filename: str, model_name: str) -> bool:
     """Files that bypass scoring entirely:
       - "Beauty shot" / "cover" / "FinalRender" labels (via _BEAUTY_RE)
@@ -181,10 +189,12 @@ def pick_cover(client: DriveClient, model: Model) -> Optional[ScoredImage]:
         return None
 
     # Hard short-circuit: explicit cover labels (Beauty shot / cover /
-    # FinalRender / Final / FolderName.jpg) bypass scoring. Largest wins.
+    # FinalRender / Final / FolderName.jpg) bypass scoring. Within the
+    # hard-pick set we prefer the lowest series number ("BS 01" beats
+    # "BS 02") with file size as a tiebreaker.
     hard = [f for f in model.image_candidates if _is_hard_pick(f.name, model.name)]
     if hard:
-        hard.sort(key=lambda f: f.size or 0, reverse=True)
+        hard.sort(key=lambda f: (_series_number(f.name), -(f.size or 0)))
         chosen = hard[0]
         log.info("[%s] hard pick: %s — using directly", model.name, chosen.name)
         try:
