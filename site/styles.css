@@ -216,68 +216,65 @@ main {
 
 .card a.button:hover { filter: brightness(1.1); }
 
-.stl-button {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
+.stl-picker {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 6px;
+  align-items: stretch;
+}
+
+.stl-select {
+  width: 100%;
+  min-height: 40px;
   padding: 8px 10px;
   background: var(--card);
   color: var(--fg);
   border: 1px solid var(--border);
   border-radius: 8px;
-  text-decoration: none;
-  min-height: 40px;
   font-size: 0.85rem;
+  font-family: inherit;
 }
 
-.stl-button:hover {
-  border-color: var(--accent);
-  background: var(--chip-bg);
+.stl-select:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
 }
 
-.stl-button.is-presupported {
-  border-left: 3px solid var(--accent);
+.stl-download {
+  padding: 0 14px;
+  min-height: 40px;
+  background: var(--accent);
+  color: var(--accent-fg);
+  border: none;
+  border-radius: 8px;
+  font-size: 0.85rem;
   font-weight: 500;
-}
-
-.stl-name {
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  flex: 1;
-}
-
-.stl-size {
-  color: var(--muted);
-  font-variant-numeric: tabular-nums;
-  font-size: 0.75rem;
-  flex-shrink: 0;
-}
-
-.stl-more {
-  display: contents;
-}
-
-.stl-more summary {
   cursor: pointer;
-  padding: 6px 8px;
-  font-size: 0.8rem;
-  color: var(--muted);
-  list-style: none;
-  text-align: center;
+  font-family: inherit;
 }
 
-.stl-more summary:hover { color: var(--fg); }
-.stl-more[open] summary { margin-bottom: 4px; }
+.stl-download:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.stl-download:not(:disabled):hover {
+  filter: brightness(1.1);
+}
 
 .card a.folder-link {
+  display: inline-block;
+  padding: 6px 0;
   font-size: 0.8rem;
   color: var(--muted);
   text-decoration: none;
+  align-self: flex-start;
 }
 
-.card a.folder-link:hover { text-decoration: underline; }
+.card a.folder-link:hover {
+  color: var(--accent);
+  text-decoration: underline;
+}
 
 .card.skeleton {
   height: 320px;

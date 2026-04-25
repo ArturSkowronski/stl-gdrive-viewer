@@ -222,3 +222,65 @@ def test_bs_lower_number_beats_higher_number():
     assert selector._series_number("BellBeast BS 01.jpg") < selector._series_number(
         "BellBeast BS 02.jpg"
     )
+
+
+# --- _is_semi_product_stl --------------------------------------------
+
+
+@pytest.mark.parametrize("filename,expected", [
+    # Calibration / test prints — drop these from the user-facing list
+    ("test_print.stl", True),
+    ("Geralt_test.stl", True),
+    ("Geralt_Sample.stl", True),
+    ("demo.stl", True),
+    ("preview_001.stl", True),
+    ("WIP_pose_v3.stl", True),
+    ("calibration_temple.stl", True),
+    ("cut_test.stl", True),
+    ("cut-test.stl", True),
+    ("stress test.stl", True),
+    ("3DBenchy.stl", False),  # "benchy" alone isn't matched; only "bench print" is
+    ("bench_print.stl", True),
+    ("benchmark.stl", True),
+    # Real model files — must NOT be filtered
+    ("Geralt.stl", False),
+    ("Geralt_Bust.stl", False),
+    ("Geralt_Body.stl", False),
+    ("Geralt_Head.stl", False),
+    ("Geralt_Presupported.stl", False),
+    ("Geralt_PreSupports.stl", False),
+    ("Geralt_75mm.stl", False),
+    ("Geralt_1-10_Scale.stl", False),
+    ("Geralt_Split_v2.stl", False),
+    ("Geralt_STL.7z", False),
+    ("Triss.stl", False),
+    # Edge cases — filename contains the word as a substring of a real name
+    ("Testify_Hero.stl", False),  # "test" is part of "testify"
+    ("Sampletree.stl", False),  # "sample" is part of "sampletree"
+    ("Demonstrator.stl", False),  # "demo" is part of "demonstrator"
+])
+def test_is_semi_product_stl(filename, expected):
+    assert selector._is_semi_product_stl(filename) is expected
+
+
+# --- _is_presupported_stl --------------------------------------------
+
+
+@pytest.mark.parametrize("filename,parent,expected", [
+    # Folder name is the canonical signal
+    ("kratos.stl", "Presupported", True),
+    ("kratos.stl", "Kratos_Presupports", True),
+    ("kratos.stl", "presupported_files", True),
+    # Filename also counts (NomNom often ships them mixed in flat folders)
+    ("Geralt_Presupported.stl", "STL", True),
+    ("Geralt_PreSupports.stl", "STL", True),
+    ("Geralt_Pre_Supported.stl", "STL", True),
+    ("Geralt_PreSupport.stl", "STL", True),
+    # Negatives — raw mesh files
+    ("Geralt.stl", "STL", False),
+    ("Geralt_Body.stl", "Bust", False),
+    ("Geralt_Supports.stl", "STL", False),  # supports != presupported
+    ("Geralt_Unsupported.stl", "Unsupported", False),
+])
+def test_is_presupported_stl(filename, parent, expected):
+    assert selector._is_presupported_stl(filename, parent) is expected

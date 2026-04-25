@@ -74,6 +74,29 @@ _NAME_STOPWORDS = {
     "turntable", "supported",
 }
 
+# STL files NomNom (and similar packs) ship that are NOT meant as the
+# end-user printable model — calibration prints, test cuts, work-in-progress
+# meshes, demo samples. We strip these from the model's file list so the
+# dropdown stays short and only shows files a user actually wants to print.
+# Matched on the base name, case-insensitive, only as standalone tokens
+# (so "stress_test.stl" matches but "TestifyHero.stl" doesn't).
+_SEMI_PRODUCT_STL_RE = _re.compile(
+    r"(?<![a-z])(?:"
+    r"test|sample|demo|preview|wip|calibration|"
+    r"cut[_\-\s]?test|stress[_\-\s]?test|temple|"
+    r"benchmark|bench[_\-\s]?print"
+    r")(?![a-z])",
+    _re.IGNORECASE,
+)
+
+# "Presupported" / "PreSupports" / "Pre_Supported" anywhere in the base name.
+# Used both to flag the preferred user-friendly variant and to disambiguate
+# bare "supports" (which is a stand-alone supports file, NOT presupported).
+_PRESUPPORTED_RE = _re.compile(
+    r"pre[_\-\s]?supports?(?:ed)?",
+    _re.IGNORECASE,
+)
+
 
 def _is_beauty_shot(name: str) -> bool:
     return bool(_BEAUTY_RE.search(name))
@@ -111,6 +134,25 @@ def _is_secondary_pick(filename: str) -> bool:
     """
     base = filename.rsplit(".", 1)[0]
     return bool(_POSTER_RE.search(base) or _COVER_RE.search(base))
+
+
+def _is_semi_product_stl(filename: str) -> bool:
+    """True for STL/archive files that aren't end-user models —
+    calibration prints, test cuts, WIP meshes, demos. These are stripped
+    from the per-card file list."""
+    base = filename.rsplit(".", 1)[0]
+    return bool(_SEMI_PRODUCT_STL_RE.search(base))
+
+
+def _is_presupported_stl(filename: str, parent_folder_name: str) -> bool:
+    """Treat a file as presupported when its parent folder name contains
+    `Presupport(s/ed)` (current convention — covers `Presupports`,
+    `Presupported`, `Kratos_Presupports`, ...) OR its own filename does
+    (NomNom sometimes ships `Foo_Presupported.stl` mixed into a flat folder)."""
+    if parent_folder_name and _PRESUPPORTED_RE.search(parent_folder_name):
+        return True
+    base = filename.rsplit(".", 1)[0]
+    return bool(_PRESUPPORTED_RE.search(base))
 
 
 def _name_tokens(s: str) -> set[str]:
@@ -308,30 +350,51 @@ def pick_cover(client: DriveClient, model: Model) -> Optional[ScoredImage]:
 
 
 def pick_stls(model: Model) -> List[StlEntry]:
-    """Return all STLs sorted: presupported variants first (largest first),
-    then the rest (largest first). Empty list means no STLs in this model."""
+    """Return end-user STL/archive files sorted: presupported variants
+    first (largest first), then the rest (largest first). Semi-products
+    (test/sample/demo/preview/WIP/calibration prints) are dropped — those
+    are tooling, not characters the user wants to browse to. Empty list
+    means no usable STLs in this model."""
     n = len(model.stl_candidates)
     if n == 0:
         log.warning("[%s] no STL files in subtree", model.name)
         return []
 
-    def _is_presupported(s: StlEntry) -> bool:
-        return "presupported" in s.parent_folder_name.lower()
+    kept: List[StlEntry] = []
+    dropped: List[str] = []
+    for s in model.stl_candidates:
+        if _is_semi_product_stl(s.file.name):
+            dropped.append(s.file.name)
+        else:
+            kept.append(s)
+
+    if dropped:
+        log.info(
+            "[%s] dropped %d semi-product file(s): %s",
+            model.name, len(dropped), ", ".join(dropped),
+        )
+
+    if not kept:
+        log.warning(
+            "[%s] all %d STL(s) classified as semi-product — keeping anyway",
+            model.name, n,
+        )
+        kept = list(model.stl_candidates)
 
     presupported = sorted(
-        (s for s in model.stl_candidates if _is_presupported(s)),
+        (s for s in kept if _is_presupported_stl(s.file.name, s.parent_folder_name)),
         key=lambda s: (s.file.size or 0),
         reverse=True,
     )
     rest = sorted(
-        (s for s in model.stl_candidates if not _is_presupported(s)),
+        (s for s in kept if not _is_presupported_stl(s.file.name, s.parent_folder_name)),
         key=lambda s: (s.file.size or 0),
         reverse=True,
     )
     ordered = presupported + rest
     log.info(
-        "[%s] %d STL(s): %d presupported, %d other; first = %s (%s)",
-        model.name, n, len(presupported), len(rest),
+        "[%s] %d STL(s) kept: %d presupported, %d other; first = %s (%s)",
+        model.name, len(kept), len(presupported), len(rest),
         ordered[0].file.name,
         f"{(ordered[0].file.size or 0)/1_000_000:.1f}MB",
     )

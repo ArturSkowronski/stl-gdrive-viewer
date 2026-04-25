@@ -18,6 +18,7 @@ if __package__ in (None, ""):
     from scanner.drive import DriveClient  # noqa: E402
     from scanner.selector import (  # noqa: E402
         pick_cover, pick_stls, score_image_bytes, _hints_for, _fetch_image,
+        _is_presupported_stl,
     )
     from scanner.thumbs import thumb_path, write_thumb  # noqa: E402
     from scanner.walker import walk  # noqa: E402
@@ -25,6 +26,7 @@ else:
     from .drive import DriveClient
     from .selector import (
         pick_cover, pick_stls, score_image_bytes, _hints_for, _fetch_image,
+        _is_presupported_stl,
     )
     from .thumbs import thumb_path, write_thumb
     from .walker import walk
@@ -243,7 +245,9 @@ def main() -> int:
                             "name": s.file.name,
                             "size": s.file.size,
                             "view_url": s.file.web_view_link or _stl_view_url(s.file.id),
-                            "presupported": "presupported" in s.parent_folder_name.lower(),
+                            "presupported": _is_presupported_stl(
+                                s.file.name, s.parent_folder_name
+                            ),
                         }
                         for s in stls
                     ],
