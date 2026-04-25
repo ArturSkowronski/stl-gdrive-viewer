@@ -18,7 +18,7 @@ if __package__ in (None, ""):
     from scanner.drive import DriveClient  # noqa: E402
     from scanner.selector import (  # noqa: E402
         pick_cover, pick_stls, score_image_bytes, _hints_for, _fetch_image,
-        _is_presupported_stl,
+        _is_presupported_stl, _is_saturn_optimized,
     )
     from scanner.thumbs import thumb_path, write_thumb  # noqa: E402
     from scanner.walker import walk  # noqa: E402
@@ -26,7 +26,7 @@ else:
     from .drive import DriveClient
     from .selector import (
         pick_cover, pick_stls, score_image_bytes, _hints_for, _fetch_image,
-        _is_presupported_stl,
+        _is_presupported_stl, _is_saturn_optimized,
     )
     from .thumbs import thumb_path, write_thumb
     from .walker import walk
@@ -232,6 +232,27 @@ def main() -> int:
                 skipped_no_cover.append(m.name)
                 thumb_rel = None
 
+            stl_entries = []
+            any_saturn = False
+            for s in stls:
+                # Folder chain to scan for Saturn markers: walker's
+                # parent_chain (every ancestor down to immediate parent)
+                # plus the model's own folder_path + leaf name (in case the
+                # marker sits on the model folder itself).
+                chain = list(s.parent_chain) + list(m.folder_path) + [m.name]
+                saturn = _is_saturn_optimized(s.file.name, chain)
+                any_saturn = any_saturn or saturn
+                stl_entries.append({
+                    "file_id": s.file.id,
+                    "name": s.file.name,
+                    "size": s.file.size,
+                    "view_url": s.file.web_view_link or _stl_view_url(s.file.id),
+                    "presupported": _is_presupported_stl(
+                        s.file.name, s.parent_folder_name
+                    ),
+                    "saturn_optimized": saturn,
+                })
+
             manifest_models.append(
                 {
                     "id": m.folder_id,
@@ -239,18 +260,8 @@ def main() -> int:
                     "release": m.release,
                     "folder_url": m.web_view_link,
                     "thumb": thumb_rel,
-                    "stls": [
-                        {
-                            "file_id": s.file.id,
-                            "name": s.file.name,
-                            "size": s.file.size,
-                            "view_url": s.file.web_view_link or _stl_view_url(s.file.id),
-                            "presupported": _is_presupported_stl(
-                                s.file.name, s.parent_folder_name
-                            ),
-                        }
-                        for s in stls
-                    ],
+                    "saturn_optimized": any_saturn,
+                    "stls": stl_entries,
                 }
             )
         except Exception as e:

@@ -26,8 +26,11 @@ log = logging.getLogger(__name__)
 IMAGE_MIMES = {"image/jpeg", "image/png", "image/webp"}
 # .stl is the loose case. NomNom often ships the actual STLs inside a
 # `*_STL.7z` archive — treat archives as model files too so those folders
-# don't silently disappear from the gallery.
-STL_EXTS = (".stl", ".7z", ".zip", ".rar")
+# don't silently disappear from the gallery. .ctb / .goo are pre-sliced
+# resin printer formats (ChituBox / Elegoo native): they're already ready
+# to print on a compatible Elegoo printer (Saturn / Mars family) and worth
+# surfacing so users can grab them instead of re-slicing an STL.
+STL_EXTS = (".stl", ".7z", ".zip", ".rar", ".ctb", ".goo")
 MAX_DEPTH = 6
 
 # Tokens that indicate a folder is a generic container, not a model name.
@@ -127,6 +130,10 @@ class Model:
 class StlEntry:
     file: DriveFile
     parent_folder_name: str  # for presupported preference
+    # Full ancestor chain from the Drive root down to (and including) the
+    # immediate parent folder. Used to detect printer-targeted markers
+    # ("Saturn 4 Ultra/", "S4U/") that may sit several levels above the file.
+    parent_chain: List[str] = field(default_factory=list)
 
 
 def walk(client: DriveClient, root_id: str) -> List[Model]:
@@ -179,8 +186,14 @@ def _visit(
             direct_files.append(c)
 
     direct_images = [f for f in direct_files if _is_image(f)]
+    # parent_chain captures every folder name from the Drive root down to
+    # and including the file's immediate parent — this is what the Saturn
+    # detector walks to find printer markers anywhere up the tree.
+    chain = path + ([root_name] if root_name else [])
     direct_stls = [
-        StlEntry(file=f, parent_folder_name=root_name) for f in direct_files if _is_stl(f)
+        StlEntry(file=f, parent_folder_name=root_name, parent_chain=list(chain))
+        for f in direct_files
+        if _is_stl(f)
     ]
 
     sub_results = []
