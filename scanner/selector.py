@@ -85,6 +85,14 @@ def score_image_bytes(data: bytes) -> tuple[float, Image.Image]:
     return score, img
 
 
+def _fetch_image(client: DriveClient, file) -> bytes:
+    """Try the CDN-thumbnail fast path first, fall back to full download."""
+    data = client.fetch_thumbnail(file, size=1024)
+    if data:
+        return data
+    return client.download_bytes(file.id, max_bytes=DOWNLOAD_HARD_CAP)
+
+
 def pick_cover(client: DriveClient, model: Model) -> Optional[ScoredImage]:
     """Download each candidate image, score it, return the best one.
 
@@ -104,7 +112,7 @@ def pick_cover(client: DriveClient, model: Model) -> Optional[ScoredImage]:
         chosen = beauty[0]
         log.info("[%s] beauty shot found: %s — using it as cover", model.name, chosen.name)
         try:
-            data = client.download_bytes(chosen.id, max_bytes=DOWNLOAD_HARD_CAP)
+            data = _fetch_image(client, chosen)
             pil = Image.open(io.BytesIO(data))
             pil = ImageOps.exif_transpose(pil).convert("RGB")
             return ScoredImage(file=chosen, score=999.0, raw_bytes=data, pil_image=pil)
@@ -131,7 +139,7 @@ def pick_cover(client: DriveClient, model: Model) -> Optional[ScoredImage]:
     for f in candidates:
         size_str = f"{f.size/1_000_000:.1f}MB" if f.size else "?MB"
         try:
-            data = client.download_bytes(f.id, max_bytes=DOWNLOAD_HARD_CAP)
+            data = _fetch_image(client, f)
         except Exception as e:
             log.warning("[%s]   reject %s (%s): download — %s", model.name, f.name, size_str, e)
             continue

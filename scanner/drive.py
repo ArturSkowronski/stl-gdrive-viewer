@@ -18,7 +18,10 @@ import io
 import logging
 import os
 import random
+import re
 import time
+import urllib.error
+import urllib.request
 from dataclasses import dataclass
 from typing import Iterator, Optional
 
@@ -42,7 +45,7 @@ SHORTCUT_MIME = "application/vnd.google-apps.shortcut"
 LIST_FIELDS = (
     "nextPageToken,"
     "files(id,name,mimeType,size,imageMediaMetadata(width,height),"
-    "shortcutDetails,webViewLink,modifiedTime)"
+    "shortcutDetails,webViewLink,modifiedTime,thumbnailLink)"
 )
 
 
@@ -58,6 +61,7 @@ class DriveFile:
     modified_time: Optional[str]
     shortcut_target_id: Optional[str]
     shortcut_target_mime: Optional[str]
+    thumbnail_link: Optional[str]
 
     @property
     def is_folder(self) -> bool:
@@ -95,6 +99,7 @@ class DriveFile:
             modified_time=raw.get("modifiedTime"),
             shortcut_target_id=sd.get("targetId"),
             shortcut_target_mime=sd.get("targetMimeType"),
+            thumbnail_link=raw.get("thumbnailLink"),
         )
 
 
@@ -200,6 +205,27 @@ class DriveClient:
             page_token = resp.get("nextPageToken")
             if not page_token:
                 return
+
+    def fetch_thumbnail(self, file: "DriveFile", size: int = 1024) -> Optional[bytes]:
+        """Fetch the Drive-generated thumbnail via googleusercontent CDN.
+
+        Bypasses the Drive API entirely (no quota cost, no rate limit) and
+        returns ~50-500 KB JPEG instead of the multi-MB original. The link
+        carries its own auth token so anonymous works for "anyone with link"
+        files. Returns None when no thumbnail is available or fetch fails.
+        """
+        url = file.thumbnail_link
+        if not url:
+            return None
+        # Drive's thumbnailLink ends with =sNN (or =sNN-c for cropped). Bump it.
+        url = re.sub(r"=s\d+(-[a-z]+)?$", f"=s{size}", url)
+        try:
+            req = urllib.request.Request(url, headers={"User-Agent": "stl-gdrive-viewer/1"})
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                return resp.read()
+        except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError) as e:
+            log.warning("thumbnail fetch failed for %s: %s", file.name, e)
+            return None
 
     def download_bytes(self, file_id: str, max_bytes: int = 8 * 1024 * 1024) -> bytes:
         """Download a file. Aborts past max_bytes to keep memory bounded."""
