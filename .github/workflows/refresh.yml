@@ -1,6 +1,8 @@
 name: Refresh gallery
 
 on:
+  push:
+    branches: [main]
   schedule:
     - cron: "0 5 * * *"
   workflow_dispatch:
@@ -48,13 +50,11 @@ jobs:
           GOOGLE_OAUTH_CLIENT_ID: ${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}
           GOOGLE_OAUTH_CLIENT_SECRET: ${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}
           GOOGLE_OAUTH_REFRESH_TOKEN: ${{ secrets.GOOGLE_OAUTH_REFRESH_TOKEN }}
-          ROOT_FOLDER_ID: ${{ inputs.root_folder_id || vars.GDRIVE_ROOT_FOLDER_ID }}
+          # Final fallback matches the dispatch input default so cron/push
+          # work out of the box without needing GDRIVE_ROOT_FOLDER_ID variable.
+          ROOT_FOLDER_ID: ${{ inputs.root_folder_id || vars.GDRIVE_ROOT_FOLDER_ID || '15F2OsqqekNu3C8MpdhMtsAcuZl5OwCDX' }}
           LIMIT: ${{ inputs.limit }}
         run: |
-          if [ -z "$ROOT_FOLDER_ID" ]; then
-            echo "::error::No folder ID — set GDRIVE_ROOT_FOLDER_ID variable or pass root_folder_id input"
-            exit 1
-          fi
           args=(--root "$ROOT_FOLDER_ID" --out site/manifest.json --thumbs site/thumbs -v)
           if [ -n "$LIMIT" ]; then
             args+=(--limit "$LIMIT")
