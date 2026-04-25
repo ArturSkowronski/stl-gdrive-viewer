@@ -24,7 +24,10 @@ from .drive import DriveClient, DriveFile
 log = logging.getLogger(__name__)
 
 IMAGE_MIMES = {"image/jpeg", "image/png", "image/webp"}
-STL_EXTS = (".stl",)
+# .stl is the loose case. NomNom often ships the actual STLs inside a
+# `*_STL.7z` archive — treat archives as model files too so those folders
+# don't silently disappear from the gallery.
+STL_EXTS = (".stl", ".7z", ".zip", ".rar")
 MAX_DEPTH = 6
 
 # Tokens that indicate a folder is a generic container, not a model name.
