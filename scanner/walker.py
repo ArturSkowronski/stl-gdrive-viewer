@@ -197,9 +197,23 @@ def _visit(
     sub_has_stl = any(r["has_stl"] for _, r in sub_results) or bool(direct_stls)
 
     if not sub_has_stl:
+        # No STLs anywhere in this subtree — but we may still have images
+        # (e.g. a `render images/` subfolder full of beauty shots). Propagate
+        # them upward so a sibling subtree's ancestor can claim them.
+        bubbled_images = list(direct_images)
+        for _, r in sub_results:
+            bubbled_images.extend(r["all_images"])
         if root_name:
-            log.debug("skip (no stls): %s", "/".join(path))
-        return {"has_stl": False, "models_added": [], "all_images": [], "all_stls": []}
+            log.debug(
+                "no STLs in %s — bubbling up %d image(s)",
+                "/".join(path), len(bubbled_images),
+            )
+        return {
+            "has_stl": False,
+            "models_added": [],
+            "all_images": bubbled_images,
+            "all_stls": [],
+        }
 
     name_is_generic = _is_generic_name(root_name)
     is_root = depth == 0
