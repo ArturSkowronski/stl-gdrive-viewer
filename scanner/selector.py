@@ -9,6 +9,7 @@ from __future__ import annotations
 import io
 import logging
 import math
+import re as _re
 from dataclasses import dataclass
 from typing import List, Optional
 
