@@ -15,6 +15,7 @@ and standalone models in the root, all without hardcoding levels.
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass, field
 from typing import List, Optional
 
@@ -25,6 +26,71 @@ log = logging.getLogger(__name__)
 IMAGE_MIMES = {"image/jpeg", "image/png", "image/webp"}
 STL_EXTS = (".stl",)
 MAX_DEPTH = 6
+
+# Tokens that indicate a folder is a generic container, not a model name.
+# A folder name made up *entirely* of these (plus digits) is considered
+# unusable for display, and the walker climbs up the path to find a real one.
+GENERIC_TOKENS = {
+    "stl", "stls", "bust", "busts", "split", "splits",
+    "presupported", "unsupported", "supported",
+    "scale", "miniature", "miniatures", "mini", "minis", "mm",
+    "raw", "bonus", "extras", "files", "images", "renders", "lore",
+}
+
+# Strips trailing format/variant labels separated by space/_/- so
+# "Asuka_STL" -> "Asuka" and "Tifa Bust" -> "Tifa".
+_TRAILING_GENERIC_RE = re.compile(
+    r"[\s_\-]+(stl|stls|bust|busts|split|splits|presupported|unsupported|"
+    r"miniature|miniatures|files|raw)$",
+    re.IGNORECASE,
+)
+
+
+def _split_unit(token: str) -> List[str]:
+    """`75mm` -> ['75', 'mm']."""
+    m = re.match(r"^(\d+)([a-z]+)$", token)
+    return [m.group(1), m.group(2)] if m else [token]
+
+
+def _is_generic_token(tok: str) -> bool:
+    if not tok:
+        return True
+    if tok.isdigit():
+        return True
+    return tok in GENERIC_TOKENS
+
+
+def _is_generic_name(name: str) -> bool:
+    """True if every word in the name is generic (or just digits/units)."""
+    if not name:
+        return True
+    raw = [t for t in re.split(r"[\s,/_\-]+", name.lower()) if t]
+    expanded: List[str] = []
+    for t in raw:
+        expanded.extend(_split_unit(t))
+    return bool(expanded) and all(_is_generic_token(t) for t in expanded)
+
+
+def _strip_trailing_generic(name: str) -> str:
+    cleaned = name.strip()
+    while True:
+        new = _TRAILING_GENERIC_RE.sub("", cleaned).strip()
+        if new == cleaned or not new:
+            break
+        cleaned = new
+    return cleaned or name
+
+
+def _meaningful_name(folder_path: List[str], leaf_name: str) -> str:
+    """Walk up the chain leaf -> root; return the deepest non-generic name,
+    with trailing format suffixes (`_STL`, `Bust`, ...) stripped."""
+    chain = list(folder_path) + [leaf_name]
+    for raw in reversed(chain):
+        cleaned = _strip_trailing_generic(raw)
+        if cleaned and not _is_generic_name(cleaned):
+            return cleaned
+    # All names in the chain are generic — best effort: stripped leaf.
+    return _strip_trailing_generic(leaf_name) or leaf_name
 
 
 def _is_stl(f: DriveFile) -> bool:
@@ -146,8 +212,16 @@ def _visit(
             all_images.extend(r["all_images"])
             all_stls.extend(r["all_stls"])
 
+        leaf = root_name or "(root)"
+        display_name = _meaningful_name(path, leaf)
+        if display_name != leaf:
+            log.info(
+                "renamed model: %s -> %s (path=%s)",
+                leaf, display_name, "/".join(path),
+            )
+
         model = Model(
-            name=root_name or "(root)",
+            name=display_name,
             folder_id=folder_id,
             folder_path=list(path),
             web_view_link=f"https://drive.google.com/drive/folders/{folder_id}",
