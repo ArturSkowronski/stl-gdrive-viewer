@@ -66,28 +66,20 @@ function fmtSize(bytes) {
   return mb >= 1 ? `${mb.toFixed(1)} MB` : `${(bytes / 1000).toFixed(0)} KB`;
 }
 
-function renderStlButtons(stls) {
-  // Show first 5 inline; rest behind a "show more" toggle.
-  const VISIBLE = 5;
-  const visible = stls.slice(0, VISIBLE);
-  const hidden = stls.slice(VISIBLE);
-  const btn = (s) => `
-    <a class="stl-button${s.presupported ? " is-presupported" : ""}"
-       href="${escapeHTML(s.view_url)}"
-       target="_blank" rel="noopener"
-       title="${escapeHTML(s.name)}">
-      <span class="stl-name">${escapeHTML(s.name)}</span>
-      <span class="stl-size">${escapeHTML(fmtSize(s.size))}</span>
-    </a>`;
-  let html = visible.map(btn).join("");
-  if (hidden.length) {
-    html += `
-      <details class="stl-more">
-        <summary>+ ${hidden.length} więcej</summary>
-        ${hidden.map(btn).join("")}
-      </details>`;
-  }
-  return html;
+function renderStlPicker(stls) {
+  // Dropdown: pick a file, "Pobierz" opens it in a new tab.
+  // Presupported variants are flagged with a star so the user-friendly
+  // option is obvious at a glance. The folder link sits separately so
+  // "give me everything" stays a one-tap action.
+  const opts = stls
+    .map((s, i) => {
+      const star = s.presupported ? "★ " : "";
+      const size = s.size ? ` — ${fmtSize(s.size)}` : "";
+      return `<option value="${i}">${escapeHTML(star + s.name + size)}</option>`;
+    })
+    .join("");
+  const word = plPlural(stls.length, "plik", "pliki", "plików");
+  return `<select class="stl-select" data-role="stl-select"><option value="" disabled selected>Wybierz plik (${stls.length} ${word})…</option>${opts}</select><button type="button" class="stl-download" data-role="stl-download" disabled>Pobierz</button>`;
 }
 
 function renderCard(m) {
@@ -100,8 +92,9 @@ function renderCard(m) {
     ? `<img src="${escapeHTML(m.thumb)}" alt="${escapeHTML(m.name)}" loading="lazy">`
     : `<div class="no-thumb" aria-label="brak miniatury">${escapeHTML((m.name[0] || "?").toUpperCase())}</div>`;
   const thumbHref = primary ? primary.view_url : m.folder_url;
+  const stlPicker = stls.length ? renderStlPicker(stls) : "";
   return `
-    <li class="card">
+    <li class="card" data-model-id="${escapeHTML(m.id)}">
       <a class="thumb-wrap" href="${escapeHTML(thumbHref)}" target="_blank" rel="noopener">
         ${thumbInner}
       </a>
@@ -109,13 +102,39 @@ function renderCard(m) {
         ${release}
         <h2>${escapeHTML(m.name)}</h2>
         <div class="actions">
-          ${renderStlButtons(stls)}
+          <div class="stl-picker">
+            ${stlPicker}
+          </div>
           <a class="folder-link" href="${escapeHTML(m.folder_url)}" target="_blank" rel="noopener">
-            Cały folder na Drive
+            Folder na Drive ↗
           </a>
         </div>
       </div>
     </li>`;
+}
+
+function attachStlPickerHandlers() {
+  // Wire each card's <select> + Pobierz button. URLs are kept off the DOM
+  // by index — model lookup happens via data-model-id, so we don't need
+  // to re-encode every URL into option attributes.
+  $grid.querySelectorAll(".card").forEach((card) => {
+    const select = card.querySelector('[data-role="stl-select"]');
+    const button = card.querySelector('[data-role="stl-download"]');
+    if (!select || !button) return;
+    const id = card.dataset.modelId;
+    const model = state.models.find((m) => m.id === id);
+    if (!model) return;
+    select.addEventListener("change", () => {
+      button.disabled = select.value === "";
+    });
+    button.addEventListener("click", () => {
+      const idx = parseInt(select.value, 10);
+      const stl = model.stls && model.stls[idx];
+      if (stl && stl.view_url) {
+        window.open(stl.view_url, "_blank", "noopener");
+      }
+    });
+  });
 }
 
 function renderGrid() {
@@ -131,6 +150,7 @@ function renderGrid() {
   }
   $status.hidden = true;
   $grid.innerHTML = items.map(renderCard).join("");
+  attachStlPickerHandlers();
 }
 
 function plPlural(n, one, few, many) {
