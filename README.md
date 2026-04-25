@@ -8,7 +8,43 @@ i generuje `manifest.json` + miniatury. Galeria hostuje się na GitHub Pages.
 Pliki STL **nie są** redystrybuowane — przycisk na karcie prowadzi do
 `webViewLink` w Drive z istniejącymi uprawnieniami pliku.
 
-## Setup (jednorazowo, ~10 min)
+## Wybór auth: API key czy OAuth?
+
+Skaner obsługuje oba — auto-detect z env. Wybierz pierwszą ścieżkę, która
+do Ciebie pasuje:
+
+- **API key** (~2 min setupu): wszystkie pliki, włącznie z celami
+  shortcutów, są publiczne („anyone with the link"). Najprostsze, refresh
+  token nie istnieje, odwiedzający galerię pobierają STL-e bez logowania.
+- **OAuth user** (~10 min setupu): pliki są udostępnione tylko Tobie
+  osobiście (typowy przypadek NomNom z prywatnymi shortcutami). Skaner
+  działa jak Ty, widzi wszystko co Ty.
+
+Jeśli ustawisz oba zestawy sekretów, skaner użyje API key.
+
+## Setup A — API key (publiczny folder)
+
+### 1. Google Cloud — projekt + Drive API
+
+1. https://console.cloud.google.com → utwórz projekt.
+2. **APIs & Services → Library** → „Google Drive API" → **Enable**.
+
+### 2. Wygeneruj API key
+
+1. **APIs & Services → Credentials → + Create Credentials → API key**.
+2. Skopiuj klucz. Dla bezpieczeństwa: **Edit API key** →
+   *API restrictions* → ogranicz do „Google Drive API".
+
+### 3. GitHub Secrets + Variable
+
+W repo → **Settings → Secrets and variables → Actions**:
+
+- **Secret**: `GOOGLE_API_KEY` = wartość z kroku 2.
+- **Variable**: `GDRIVE_ROOT_FOLDER_ID` = ID głównego folderu z URL-a.
+
+Pomiń całą sekcję B i przejdź do **Włącz GitHub Pages**.
+
+## Setup B — OAuth user (prywatny folder)
 
 ### 1. Google Cloud — projekt + Drive API
 
@@ -59,11 +95,11 @@ W repo → **Settings → Secrets and variables → Actions**:
   chcesz zeskanować. Skopiuj z URL-a folderu otwartego w Drive:
   `https://drive.google.com/drive/folders/<TUTAJ>`.
 
-### 6. Włącz GitHub Pages
+## Włącz GitHub Pages
 
 **Settings → Pages → Source: GitHub Actions**.
 
-### 7. Pierwszy run
+## Pierwszy run
 
 **Actions → Refresh gallery → Run workflow**. Po sukcesie URL Pages
 wyświetli się w środowisku `github-pages`.
@@ -71,10 +107,15 @@ wyświetli się w środowisku `github-pages`.
 ## Lokalne uruchomienie
 
 ```bash
-# wygeneruj refresh token raz (krok 4 powyżej), potem:
-export GOOGLE_OAUTH_CLIENT_ID=...
-export GOOGLE_OAUTH_CLIENT_SECRET=...
-export GOOGLE_OAUTH_REFRESH_TOKEN=...
+pip install -r scanner/requirements.txt
+
+# Setup A (API key):
+export GOOGLE_API_KEY=...
+
+# albo Setup B (OAuth):
+# export GOOGLE_OAUTH_CLIENT_ID=...
+# export GOOGLE_OAUTH_CLIENT_SECRET=...
+# export GOOGLE_OAUTH_REFRESH_TOKEN=...
 
 python -m scanner.scan \
   --root <FOLDER_ID> \
@@ -119,13 +160,17 @@ StandaloneModel/*.stl                  → StandaloneModel, release=null
 
 ## Troubleshooting
 
-- **`401` w Actions** — refresh token wygasł albo cofnięto zgodę. Powtórz
-  krok 4 i zaktualizuj `GOOGLE_OAUTH_REFRESH_TOKEN`. Jeśli OAuth consent
-  jest w stanie „Testing", token wygasa po 7 dniach — promote do
-  **Published** żeby był długoterminowy.
-- **Skaner widzi tylko skróty bez zawartości** — upewnij się, że pliki są
-  shortcutami (NomNom standard) i że Drive API jest włączone w projekcie.
-- **Widzowie nie mogą pobrać STL** — to zależy od uprawnień ustawionych
-  przez właściciela pliku (NomNom). Galeria używa `webViewLink` —
-  przekieruje do Drive z prośbą o logowanie. To zamierzone zachowanie:
-  nie redystrybuujemy plików.
+- **`401` / `403` w Actions z OAuth** — refresh token wygasł albo cofnięto
+  zgodę. Powtórz krok 4 i zaktualizuj `GOOGLE_OAUTH_REFRESH_TOKEN`. Jeśli
+  OAuth consent jest w stanie „Testing", token wygasa po 7 dniach —
+  promote do **Published** żeby był długoterminowy.
+- **`403` w Actions z API key** — albo API key jest ograniczony do innego
+  API, albo folder nie jest publiczny, albo cele shortcutów są prywatne.
+  Otwórz folder w incognito — jeśli nie ładuje się bez logowania, użyj
+  Setupu B (OAuth) zamiast API key.
+- **Skaner widzi tylko skróty bez zawartości** — przy API key oznacza, że
+  cel shortcutu jest prywatny. Przejdź na OAuth lub poproś właściciela
+  (NomNom) o publiczne udostępnienie.
+- **Widzowie nie mogą pobrać STL** — przy API key i publicznych plikach
+  pobieranie działa bez logowania. Przy OAuth i prywatnych plikach Drive
+  pokazuje ekran logowania — to zamierzone, nie redystrybuujemy plików.

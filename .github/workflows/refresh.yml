@@ -31,6 +31,9 @@ jobs:
 
       - name: Scan Drive and build manifest
         env:
+          # Set GOOGLE_API_KEY for public folders (preferred). Otherwise set
+          # the three OAuth secrets. The scanner auto-detects which is present.
+          GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
           GOOGLE_OAUTH_CLIENT_ID: ${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}
           GOOGLE_OAUTH_CLIENT_SECRET: ${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}
           GOOGLE_OAUTH_REFRESH_TOKEN: ${{ secrets.GOOGLE_OAUTH_REFRESH_TOKEN }}

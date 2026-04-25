@@ -1,21 +1,29 @@
 """Thin wrapper over Google Drive API v3.
 
-Authenticates as the user via OAuth refresh token (so the scanner sees exactly
-the same files the user does — including shortcuts to NomNom-owned folders).
-Service accounts cannot see those, which is why we don't use them.
+Two auth modes, auto-detected from env:
+  1. API key (GOOGLE_API_KEY) — for fully public folders. Shortcuts only
+     resolve if the *target* folder is also public.
+  2. OAuth user refresh token (GOOGLE_OAUTH_CLIENT_ID / _SECRET /
+     _REFRESH_TOKEN) — sees everything the user sees, including shortcuts
+     to private NomNom folders.
+
+API key is preferred when both are set, since it's simpler and doesn't
+expire. Service accounts are deliberately not supported — they're a
+different identity and can't see files shared with the user personally.
 """
 
 from __future__ import annotations
 
 import io
+import logging
 import os
 from dataclasses import dataclass
 from typing import Iterator, Optional
 
-from google.auth.transport.requests import Request
-from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload
+
+log = logging.getLogger(__name__)
 
 SCOPES = ["https://www.googleapis.com/auth/drive.readonly"]
 
@@ -81,7 +89,12 @@ class DriveFile:
         )
 
 
-def build_credentials_from_env() -> Credentials:
+def _build_service_from_oauth():
+    # Imports kept local so an API-key-only setup doesn't need cryptography
+    # and friends installed for OAuth.
+    from google.auth.transport.requests import Request
+    from google.oauth2.credentials import Credentials
+
     client_id = os.environ["GOOGLE_OAUTH_CLIENT_ID"]
     client_secret = os.environ["GOOGLE_OAUTH_CLIENT_SECRET"]
     refresh_token = os.environ["GOOGLE_OAUTH_REFRESH_TOKEN"]
@@ -94,13 +107,30 @@ def build_credentials_from_env() -> Credentials:
         scopes=SCOPES,
     )
     creds.refresh(Request())
-    return creds
+    return build("drive", "v3", credentials=creds, cache_discovery=False)
+
+
+def _build_service_from_api_key(api_key: str):
+    return build("drive", "v3", developerKey=api_key, cache_discovery=False)
+
+
+def _build_service_auto():
+    api_key = os.environ.get("GOOGLE_API_KEY")
+    if api_key:
+        log.info("auth: API key")
+        return _build_service_from_api_key(api_key), "api_key"
+    if os.environ.get("GOOGLE_OAUTH_REFRESH_TOKEN"):
+        log.info("auth: OAuth user refresh token")
+        return _build_service_from_oauth(), "oauth"
+    raise RuntimeError(
+        "no auth configured: set GOOGLE_API_KEY (public folders) or "
+        "GOOGLE_OAUTH_CLIENT_ID/_SECRET/_REFRESH_TOKEN (private/shortcut folders)"
+    )
 
 
 class DriveClient:
-    def __init__(self, credentials: Optional[Credentials] = None):
-        creds = credentials or build_credentials_from_env()
-        self._service = build("drive", "v3", credentials=creds, cache_discovery=False)
+    def __init__(self):
+        self._service, self.auth_mode = _build_service_auto()
 
     def list_children(self, folder_id: str) -> Iterator[DriveFile]:
         page_token: Optional[str] = None
