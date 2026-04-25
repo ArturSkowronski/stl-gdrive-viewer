@@ -33,15 +33,54 @@ SATURATION_WEIGHT = 0.3
 # images — promo art is usually larger than thumbnails) and take the top N.
 MAX_SCORED_PER_MODEL = 6
 
-# Filenames matching this pattern are NomNom's intended cover art. They
-# short-circuit scoring entirely: largest matching file wins. Anything
-# else goes through pure colourfulness scoring — proven robust at telling
-# painted minis (score ~1.5) from greyscale renders (~0.05).
+# Beauty/cover hard short-circuit: NomNom's explicit cover label —
+# largest matching file wins, no scoring needed.
 _BEAUTY_RE = _re.compile(r"beauty[\s_\-]*shot|beauty[\s_\-]*pic|^cover", _re.IGNORECASE)
+
+# Soft filter: filenames containing "final" or "render" as a word, or
+# matching the folder name. These narrow the candidate pool that goes to
+# colourfulness scoring — most colourful within the filtered pool wins.
+# We don't auto-pick (largest) because the technical PARTS / SCALE sheets
+# also tend to match these labels and used to dominate by file size.
+_FINAL_RE = _re.compile(r"(?<![a-z])final|final(?![a-z])", _re.IGNORECASE)
+_RENDER_RE = _re.compile(r"(?<![a-z])render|render(?![a-z])", _re.IGNORECASE)
+# Clean single-word filename like Triss.jpg, Geralt.jpg — a deliberate
+# character-name file. Match only the bare base, ≥3 letters, no digits.
+_PROPER_NOUN_RE = _re.compile(r"^[A-Z][a-zA-Z]{2,}$")
+
+_NAME_STOPWORDS = {
+    "stl", "stls", "bust", "busts", "scale", "miniature", "miniatures",
+    "render", "renders", "image", "images", "model", "the", "and", "for",
+    "from", "presupported", "unsupported",
+    "parts", "wip", "test", "lore", "raw", "photo", "photos", "preview",
+    "turntable", "supported",
+}
 
 
 def _is_beauty_shot(name: str) -> bool:
     return bool(_BEAUTY_RE.search(name))
+
+
+def _name_tokens(s: str) -> set[str]:
+    return {
+        t.lower()
+        for t in _re.findall(r"[A-Za-z]+", s)
+        if len(t) >= 3 and t.lower() not in _NAME_STOPWORDS
+    }
+
+
+def _has_hint(filename: str, model_name: str) -> bool:
+    """True if a filename hints this is a labelled candidate:
+      - contains 'final' or 'render' as a word
+      - is a clean single proper-noun file (Triss.jpg, Geralt.jpg)
+      - shares a meaningful token with the folder name
+    """
+    base = filename.rsplit(".", 1)[0]
+    if _FINAL_RE.search(base) or _RENDER_RE.search(base):
+        return True
+    if _PROPER_NOUN_RE.match(base) and base.lower() not in _NAME_STOPWORDS:
+        return True
+    return bool(_name_tokens(base) & _name_tokens(model_name))
 
 
 @dataclass
@@ -121,16 +160,25 @@ def pick_cover(client: DriveClient, model: Model) -> Optional[ScoredImage]:
         except Exception as e:
             log.warning("[%s] beauty shot %s failed (%s) — falling back to scoring", model.name, chosen.name, e)
 
+    # Filter pool: if any filenames carry a hint (final / render / folder
+    # name token), score only those — bias toward labelled images. If none,
+    # score everything. The most colourful image inside the pool wins.
+    hinted = [f for f in model.image_candidates if _has_hint(f.name, model.name)]
+    pool = hinted if hinted else list(model.image_candidates)
+    pool_label = "hinted" if hinted else "all"
+
     # Score at most MAX_SCORED_PER_MODEL — pick the largest first since
     # promo art / beauty shots are usually larger than icon-style thumbs.
     candidates = sorted(
-        model.image_candidates, key=lambda f: f.size or 0, reverse=True
+        pool, key=lambda f: f.size or 0, reverse=True
     )[:MAX_SCORED_PER_MODEL]
     n = len(candidates)
     log.info(
-        "[%s] %d image candidate(s) (scoring %d): %s",
+        "[%s] %d total, %d in %s pool, scoring %d: %s",
         model.name,
         n_total,
+        len(pool),
+        pool_label,
         n,
         ", ".join(f.name for f in candidates) or "(none)",
     )
