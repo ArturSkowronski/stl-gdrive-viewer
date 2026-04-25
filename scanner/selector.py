@@ -20,7 +20,8 @@ from .walker import Model, StlEntry
 
 log = logging.getLogger(__name__)
 
-MAX_IMAGE_BYTES = 5 * 1024 * 1024
+# Hard cap to keep memory bounded — anything sane stays well under this.
+DOWNLOAD_HARD_CAP = 100 * 1024 * 1024
 SCORE_RESIZE_TO = 256  # downscale before scoring — speed
 COLORFULNESS_WEIGHT = 0.7
 SATURATION_WEIGHT = 0.3
@@ -70,34 +71,48 @@ def score_image_bytes(data: bytes) -> tuple[float, Image.Image]:
 
 
 def pick_cover(client: DriveClient, model: Model) -> Optional[ScoredImage]:
-    """Download each candidate image, score it, return the best one."""
-    candidates: List[ScoredImage] = []
+    """Download each candidate image, score it, return the best one.
+
+    Falls back to the first successfully-loaded image if scoring fails for
+    every candidate — better to show *some* picture than skip the model.
+    """
+    if not model.image_candidates:
+        return None
+
+    scored: List[ScoredImage] = []
+    fallback: Optional[ScoredImage] = None
+
     for f in model.image_candidates:
-        if f.size is not None and f.size > MAX_IMAGE_BYTES:
-            log.debug("skip large image: %s (%d bytes)", f.name, f.size)
-            continue
         try:
-            data = client.download_bytes(f.id, max_bytes=MAX_IMAGE_BYTES)
+            data = client.download_bytes(f.id, max_bytes=DOWNLOAD_HARD_CAP)
         except Exception as e:
             log.warning("download failed for %s: %s", f.name, e)
             continue
+
         try:
             score, pil = score_image_bytes(data)
+            scored.append(ScoredImage(file=f, score=score, raw_bytes=data, pil_image=pil))
+            log.debug("score %.3f for %s in %s", score, f.name, model.name)
         except Exception as e:
-            log.warning("scoring failed for %s: %s", f.name, e)
-            continue
-        candidates.append(ScoredImage(file=f, score=score, raw_bytes=data, pil_image=pil))
-        log.debug("score %.3f for %s in model %s", score, f.name, model.name)
+            log.warning("scoring failed for %s: %s — keeping as fallback", f.name, e)
+            if fallback is None:
+                try:
+                    pil = Image.open(io.BytesIO(data))
+                    pil = ImageOps.exif_transpose(pil).convert("RGB")
+                    fallback = ScoredImage(file=f, score=0.0, raw_bytes=data, pil_image=pil)
+                except Exception as e2:
+                    log.warning("fallback decode failed for %s: %s", f.name, e2)
 
-    if not candidates:
-        return None
+    if scored:
+        scored.sort(
+            key=lambda c: (c.score, (c.file.width or 0) * (c.file.height or 0)),
+            reverse=True,
+        )
+        return scored[0]
 
-    def tiebreak_key(c: ScoredImage) -> tuple[float, int]:
-        res = (c.file.width or 0) * (c.file.height or 0)
-        return (c.score, res)
-
-    candidates.sort(key=tiebreak_key, reverse=True)
-    return candidates[0]
+    if fallback:
+        log.info("using fallback image %s for model %s", fallback.file.name, model.name)
+    return fallback
 
 
 def pick_stl(model: Model) -> Optional[StlEntry]:
