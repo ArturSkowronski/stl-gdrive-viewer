@@ -232,6 +232,47 @@ def test_kratos_same_display_name_distributes_group_images():
         assert "Kratos_BeautyShot.jpg" in names
 
 
+def test_walker_detects_mid_month_addition_to_existing_release():
+    """NomNom drops new characters into an existing release folder
+    throughout the month. The walker must detect each newly-added model
+    folder as its own `folder_id` so incremental scans pick them up.
+
+    Day 1: April 2026 has Eleven only. Day 14: NomNom adds Mike
+    in-place. Both walks must each surface their model set, with
+    distinct folder_ids, both labeled with the same release.
+    """
+    day1_tree = {
+        "root": [_FakeFile("apr", "April 2026 Release", is_folder=True)],
+        "apr": [_FakeFile("eleven", "Eleven", is_folder=True)],
+        "eleven": [_FakeFile("e_stl", "STL", is_folder=True)],
+        "e_stl": [_FakeFile("e_file", "eleven.stl", stl=True)],
+    }
+    day1 = _walk(day1_tree)
+    assert {m.display_name for m in day1} == {"Eleven"}
+    day1_ids = {m.folder_id for m in day1}
+
+    day14_tree = {
+        "root": [_FakeFile("apr", "April 2026 Release", is_folder=True)],
+        "apr": [
+            _FakeFile("eleven", "Eleven", is_folder=True),
+            _FakeFile("mike", "Mike", is_folder=True),  # newly added mid-month
+        ],
+        "eleven": [_FakeFile("e_stl", "STL", is_folder=True)],
+        "e_stl": [_FakeFile("e_file", "eleven.stl", stl=True)],
+        "mike": [_FakeFile("m_stl", "STL", is_folder=True)],
+        "m_stl": [_FakeFile("m_file", "mike.stl", stl=True)],
+    }
+    day14 = _walk(day14_tree)
+    assert {m.display_name for m in day14} == {"Eleven", "Mike"}
+    # Eleven keeps its folder_id; Mike has a new folder_id incremental
+    # mode would treat as "not in cache" → process fully.
+    day14_ids = {m.folder_id for m in day14}
+    assert day1_ids.issubset(day14_ids)
+    assert day14_ids - day1_ids == {"mike"}
+    # Both inherit the same release label from their shared parent.
+    assert all(m.release == "April 2026 Release" for m in day14)
+
+
 def test_release_promo_not_smeared_to_distinct_children():
     """A multi-character release with a promo at the top level must NOT
     pass that image down to every child (regression: Edward poster ended

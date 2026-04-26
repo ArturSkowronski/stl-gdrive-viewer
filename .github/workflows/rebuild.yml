@@ -1,0 +1,101 @@
+name: Rebuild gallery from scratch
+
+# Manual-only escape hatch: ignore the incremental cache, walk Drive end
+# to end, re-pick every cover, regenerate every thumb, and write a fresh
+# site/manifest.json. Use this when:
+#   - you've changed selector/walker heuristics and want them applied to
+#     models that are already in the cached manifest,
+#   - covers / STL lists for existing models have changed on Drive (new
+#     presupported variants, new beauty shots),
+#   - the cache itself looks suspect.
+# The fresh state is saved back to the same actions/cache key the daily
+# refresh restores from, so the next refresh resumes from this baseline.
+
+on:
+  schedule:
+    # 02:00 UTC every Sunday — same nightly window as the daily
+    # incremental, just on the day we want a from-scratch rebuild.
+    # The fresh state lands in the same `gallery-state-*` cache so
+    # Monday's refresh resumes from this baseline.
+    - cron: "0 2 * * 0"
+  workflow_dispatch:
+    inputs:
+      root_folder_id:
+        description: "Drive folder ID to scan (overrides GDRIVE_ROOT_FOLDER_ID variable)."
+        required: false
+        type: string
+        default: "15F2OsqqekNu3C8MpdhMtsAcuZl5OwCDX"
+      limit:
+        description: "Limit to first N models (debug, leave empty for all)"
+        required: false
+        type: string
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Share the concurrency group with `Refresh gallery` so a manual rebuild
+# can't race a scheduled refresh into the same Pages deployment slot.
+concurrency:
+  group: pages-refresh
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+          cache-dependency-path: scanner/requirements.txt
+
+      - name: Install deps
+        run: pip install -r scanner/requirements.txt
+
+      - name: Drop any leftover thumbs from previous runs
+        run: rm -rf site/thumbs site/manifest.json
+
+      - name: Scan Drive and build manifest (full)
+        env:
+          GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+          GOOGLE_OAUTH_CLIENT_ID: ${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}
+          GOOGLE_OAUTH_CLIENT_SECRET: ${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}
+          GOOGLE_OAUTH_REFRESH_TOKEN: ${{ secrets.GOOGLE_OAUTH_REFRESH_TOKEN }}
+          ROOT_FOLDER_ID: ${{ inputs.root_folder_id || vars.GDRIVE_ROOT_FOLDER_ID || '15F2OsqqekNu3C8MpdhMtsAcuZl5OwCDX' }}
+          LIMIT: ${{ inputs.limit }}
+        run: |
+          args=(--root "$ROOT_FOLDER_ID" -v --out site/manifest.json --thumbs site/thumbs)
+          if [ -n "$LIMIT" ]; then
+            args+=(--limit "$LIMIT")
+          fi
+          # Note: no --incremental — every model is re-scored from scratch.
+          python -m scanner.scan "${args[@]}"
+
+      - name: Save fresh gallery state for next refresh
+        if: success()
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            site/manifest.json
+            site/thumbs
+          key: gallery-state-${{ github.run_id }}
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
