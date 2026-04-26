@@ -111,6 +111,49 @@ def _run_analyze(client, models, csv_path: Path, limit: Optional[int]) -> int:
     return 0
 
 
+def _load_existing_manifest(path: Path) -> dict[str, dict]:
+    """Read a previous manifest if it exists; return {folder_id: entry}.
+
+    Used by --incremental to skip cover-fetching + thumb regeneration for
+    models we've already processed. A missing or unparseable file means
+    "no prior state" — caller falls back to a full scan.
+    """
+    if not path.exists():
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError) as e:
+        logging.warning("could not load existing manifest at %s: %s", path, e)
+        return {}
+    return {m["id"]: m for m in data.get("models", []) if m.get("id")}
+
+
+def _prune_orphan_thumbs(thumbs_dir: Path, manifest_models: list) -> int:
+    """Delete thumb files no longer referenced by any manifest entry.
+
+    Each manifest model's `thumb` is stored as a relative path
+    (`thumbs/<filename>`); we look up by basename so the prune works
+    regardless of how the path was joined. Returns the number deleted.
+    """
+    if not thumbs_dir.exists():
+        return 0
+    referenced: set[str] = set()
+    for m in manifest_models:
+        thumb_rel = m.get("thumb")
+        if thumb_rel:
+            referenced.add(Path(thumb_rel).name)
+    removed = 0
+    for fp in thumbs_dir.iterdir():
+        if fp.is_file() and fp.name not in referenced:
+            try:
+                fp.unlink()
+                removed += 1
+                logging.info("pruned orphan thumb: %s", fp.name)
+            except OSError as e:
+                logging.warning("could not remove %s: %s", fp, e)
+    return removed
+
+
 def _release_sort_key(release: Optional[str]) -> tuple:
     if not release:
         return (1, "")  # null releases sorted last
@@ -145,6 +188,18 @@ def main() -> int:
             "model + image candidate, score them all, and write a CSV to "
             "this path with hints, scores, and which file would be picked. "
             "Use this to audit cover selection across the whole catalogue."
+        ),
+    )
+    parser.add_argument(
+        "--incremental",
+        action="store_true",
+        help=(
+            "Skip cover-fetching + thumbnail generation for models whose "
+            "folder_id already appears in the existing manifest at --out. "
+            "New models are processed normally, deleted models are pruned, "
+            "orphaned thumb files are cleaned. Use this for daily refreshes; "
+            "use a full scan (no --incremental) when you want covers and "
+            "STL lists to re-pick from scratch."
         ),
     )
     args = parser.parse_args()
@@ -210,18 +265,40 @@ def main() -> int:
     if args.limit:
         models = models[: args.limit]
 
+    # Incremental mode: load the previous manifest and short-circuit any
+    # model whose folder_id we've already processed. The cached entry
+    # (display_name, release, thumb, stls, saturn_optimized) is copied
+    # verbatim — no Drive image fetch, no PIL pass.
+    cached: dict[str, dict] = (
+        _load_existing_manifest(out_path) if args.incremental else {}
+    )
+    if args.incremental:
+        logging.warning(
+            "incremental: loaded %d cached model(s) from %s",
+            len(cached), out_path,
+        )
+
     manifest_models = []
     skipped_no_cover: list[str] = []
     skipped_no_stl: list[str] = []
     crashed: list[str] = []
+    carried_forward = 0
+    newly_processed = 0
     for m in models:
         try:
+            if m.folder_id in cached:
+                # Trust the previous run — caller asked for incremental,
+                # the contract is "once indexed, doesn't change."
+                manifest_models.append(cached[m.folder_id])
+                carried_forward += 1
+                continue
             cover = pick_cover(client, m)
             stls = pick_stls(m)
             if not stls:
                 logging.warning("skip %s — no STL", m.name)
                 skipped_no_stl.append(m.name)
                 continue
+            newly_processed += 1
 
             if cover:
                 thumb_dest = thumb_path(thumbs_dir, m.name, cover.file.id)
@@ -285,6 +362,18 @@ def main() -> int:
         "models": manifest_models,
     }
     out_path.write_text(json.dumps(manifest, indent=2, ensure_ascii=False))
+
+    # In incremental mode, prune thumb files that no longer back any
+    # manifest entry — models removed from Drive (or merged into others)
+    # would otherwise leak files into the cache forever.
+    if args.incremental:
+        pruned = _prune_orphan_thumbs(thumbs_dir, manifest_models)
+        seen_ids = {mm["id"] for mm in manifest_models}
+        dropped = [eid for eid in cached if eid not in seen_ids]
+        logging.warning(
+            "incremental summary: %d carried forward, %d new, %d dropped, %d orphan thumbs pruned",
+            carried_forward, newly_processed, len(dropped), pruned,
+        )
 
     # Final summary so the cause of any drop-off is obvious in CI logs.
     total = len(models)

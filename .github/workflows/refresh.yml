@@ -1,5 +1,12 @@
 name: Refresh gallery
 
+# Daily incremental refresh: only NEW model folders pay the cover-fetching
+# + thumbnail-generation cost. Already-indexed models are read out of the
+# previous run's manifest (restored from the actions/cache key
+# `gallery-state-*`). Use the `Rebuild gallery from scratch` workflow
+# when you need every cover and STL list re-picked from current Drive
+# state — for example after fixing a heuristic in selector.py.
+
 on:
   push:
     branches: [main]
@@ -46,6 +53,18 @@ jobs:
       - name: Install deps
         run: pip install -r scanner/requirements.txt
 
+      - name: Restore previous gallery state
+        id: gallery-cache
+        if: ${{ inputs.analyze != true }}
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            site/manifest.json
+            site/thumbs
+          key: gallery-state-${{ github.run_id }}
+          restore-keys: |
+            gallery-state-
+
       - name: Scan Drive and build manifest
         env:
           # Set GOOGLE_API_KEY for public folders (preferred). Otherwise set
@@ -67,9 +86,20 @@ jobs:
           if [ "$ANALYZE" = "true" ]; then
             args+=(--analyze cover-analysis.csv --out /tmp/manifest.json --thumbs /tmp/thumbs)
           else
-            args+=(--out site/manifest.json --thumbs site/thumbs)
+            # --incremental skips cover/thumb work for folder_ids already
+            # in site/manifest.json (restored from cache above).
+            args+=(--incremental --out site/manifest.json --thumbs site/thumbs)
           fi
           python -m scanner.scan "${args[@]}"
+
+      - name: Save updated gallery state
+        if: ${{ inputs.analyze != true && success() }}
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            site/manifest.json
+            site/thumbs
+          key: gallery-state-${{ github.run_id }}
 
       - name: Upload analysis CSV
         if: ${{ inputs.analyze == true }}

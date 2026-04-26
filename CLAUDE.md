@@ -306,6 +306,40 @@ CI runs the same suite on every push to main and every PR.
   `stls[].name`, `stls[].size`, `stls[].presupported`. Anything else
   is internal to scan.py.
 
+## Incremental vs full scans
+
+Two workflows feed the same Pages deployment:
+
+- **`Refresh gallery`** (`refresh.yml`) — daily cron, push to main, manual
+  dispatch. Runs `scanner --incremental`: every model whose `folder_id`
+  already appears in the cached manifest is copied forward verbatim
+  (no Drive image fetch, no PIL pass), only new models pay the cost.
+  State persists across runs via `actions/cache` keyed `gallery-state-*`.
+  Orphan thumb files (model deleted from Drive) are pruned each run.
+  This is the path that runs untouched once a day.
+
+- **`Rebuild gallery from scratch`** (`rebuild.yml`) — manual dispatch
+  only. Drops the cached `site/manifest.json` + `site/thumbs/`, runs
+  the scanner with no `--incremental` flag, re-scores every cover and
+  re-picks every STL list. Fresh state is saved back to the same cache
+  key so the next refresh resumes from this baseline. Use after
+  changing selector/walker heuristics, or when NomNom updates an
+  existing folder (new BS render, new presupported variant) and you
+  want it picked up without waiting for a "happens to be new" model.
+
+The contract: incremental trusts that **once a folder_id is indexed,
+its contents don't change**. STL renames inside an existing model
+folder, new image candidates, presupported additions — none of those
+are noticed until a full rebuild. NomNom's release model (one drop
+per month per character, then frozen) makes this safe in practice.
+
+Helpers live in `scanner/scan.py`:
+
+  - `_load_existing_manifest(out_path)` → `{folder_id: entry}` or `{}`
+    on missing/unparseable file (caller falls back to full scan)
+  - `_prune_orphan_thumbs(thumbs_dir, models)` removes thumb files no
+    longer referenced by any manifest entry, returns the count
+
 ## Branch and deploy
 
 - Default branch: `main`. The earlier `claude/model-gallery-google-drive-3gVLK`
