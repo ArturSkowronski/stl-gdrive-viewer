@@ -1,4 +1,6 @@
 const ALL = "__all__";
+const SORT_CHRONO = "chrono";
+const SORT_ALPHA = "alpha";
 
 const state = {
   models: [],
@@ -6,12 +8,15 @@ const state = {
   query: "",
   release: ALL,
   saturnOnly: false,
+  sort: SORT_CHRONO,
 };
 
 const $grid = document.getElementById("grid");
 const $search = document.getElementById("search");
 const $releases = document.getElementById("releases");
 const $saturnFilter = document.getElementById("saturn-filter");
+const $sortChrono = document.getElementById("sort-chrono");
+const $sortAlpha = document.getElementById("sort-alpha");
 const $status = document.getElementById("status");
 const $meta = document.getElementById("meta");
 const $count = document.getElementById("count");
@@ -52,9 +57,22 @@ function renderChips() {
   });
 }
 
+function sortModels(models) {
+  // SORT_CHRONO === manifest order (scan.py already writes newest-release
+  // first, alphabetical name within release). SORT_ALPHA flattens that
+  // into a single A–Z list using Polish collation so ą/ć/ł/ż land where
+  // a Polish reader expects them.
+  if (state.sort === SORT_ALPHA) {
+    return models.slice().sort((a, b) =>
+      (a.name || "").localeCompare(b.name || "", "pl", { sensitivity: "base" })
+    );
+  }
+  return models;
+}
+
 function filtered() {
   const q = state.query.trim().toLowerCase();
-  return state.models.filter((m) => {
+  const matched = state.models.filter((m) => {
     if (state.release !== ALL && m.release !== state.release) return false;
     if (state.saturnOnly && !m.saturn_optimized) return false;
     if (!q) return true;
@@ -63,6 +81,7 @@ function filtered() {
       (m.release || "").toLowerCase().includes(q)
     );
   });
+  return sortModels(matched);
 }
 
 function fmtSize(bytes) {
@@ -219,14 +238,11 @@ async function load() {
     const resp = await fetch("manifest.json", { cache: "no-cache" });
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
     const data = await resp.json();
-    state.models = (data.models || []).slice().sort((a, b) => {
-      // Stable sort: presupported (★) models first, original order kept
-      // within each bucket. Manifest already comes release-sorted from
-      // scan.py, so this just lifts the ★ ones to the top.
-      const aPre = (a.stls || []).some((s) => s.presupported) ? 0 : 1;
-      const bPre = (b.stls || []).some((s) => s.presupported) ? 0 : 1;
-      return aPre - bPre;
-    });
+    // scan.py already sorts the manifest newest-release-first then
+    // alphabetical by name within each release, which is what we want
+    // for the default "Najnowsze" view. The user can flip to plain A–Z
+    // via the toolbar toggle (state.sort === "alpha").
+    state.models = data.models || [];
     state.releases = data.releases || [];
     if (data.generated_at) {
       const d = new Date(data.generated_at);
@@ -272,5 +288,14 @@ if ($saturnFilter) {
     renderGrid();
   });
 }
+
+function setSort(mode) {
+  state.sort = mode;
+  if ($sortChrono) $sortChrono.setAttribute("aria-pressed", String(mode === SORT_CHRONO));
+  if ($sortAlpha) $sortAlpha.setAttribute("aria-pressed", String(mode === SORT_ALPHA));
+  renderGrid();
+}
+if ($sortChrono) $sortChrono.addEventListener("click", () => setSort(SORT_CHRONO));
+if ($sortAlpha) $sortAlpha.addEventListener("click", () => setSort(SORT_ALPHA));
 
 load();
