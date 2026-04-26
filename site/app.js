@@ -14,6 +14,8 @@ const $releases = document.getElementById("releases");
 const $saturnFilter = document.getElementById("saturn-filter");
 const $status = document.getElementById("status");
 const $meta = document.getElementById("meta");
+const $count = document.getElementById("count");
+const $legend = document.getElementById("legend");
 
 function escapeHTML(s) {
   return String(s).replace(/[&<>"']/g, (c) => ({
@@ -150,15 +152,53 @@ function attachStlPickerHandlers() {
   });
 }
 
+function hasActiveFilters() {
+  return Boolean(state.query) || state.release !== ALL || state.saturnOnly;
+}
+
+function clearFilters() {
+  state.query = "";
+  state.release = ALL;
+  state.saturnOnly = false;
+  $search.value = "";
+  if ($saturnFilter) $saturnFilter.setAttribute("aria-pressed", "false");
+  renderChips();
+  renderGrid();
+}
+
+function renderEmpty() {
+  $grid.innerHTML = "";
+  $status.hidden = false;
+  if (state.models.length && hasActiveFilters()) {
+    $status.innerHTML = `
+      <span class="status-text">Nic nie pasuje do filtrów.</span>
+      <button type="button" id="status-reset" class="status-reset">Wyczyść filtry</button>`;
+    const $reset = document.getElementById("status-reset");
+    if ($reset) $reset.addEventListener("click", clearFilters);
+  } else if (state.models.length) {
+    $status.textContent = "Nic nie pasuje do filtrów.";
+  } else {
+    $status.textContent = "Galeria jest pusta.";
+  }
+}
+
+function renderCount(visible, total) {
+  if (!$count) return;
+  if (!total) {
+    $count.textContent = "";
+    return;
+  }
+  const word = plPlural(visible, "model", "modele", "modeli");
+  $count.textContent =
+    visible === total ? `${total} ${word}` : `${visible} / ${total} ${word}`;
+}
+
 function renderGrid() {
   const items = filtered();
   $grid.removeAttribute("aria-busy");
+  renderCount(items.length, state.models.length);
   if (!items.length) {
-    $grid.innerHTML = "";
-    $status.hidden = false;
-    $status.textContent = state.models.length
-      ? "Nic nie pasuje do filtrów."
-      : "Galeria jest pusta.";
+    renderEmpty();
     return;
   }
   $status.hidden = true;
@@ -183,15 +223,17 @@ async function load() {
     state.releases = data.releases || [];
     if (data.generated_at) {
       const d = new Date(data.generated_at);
-      const n = state.models.length;
-      const word = plPlural(n, "model", "modele", "modeli");
       const sat = state.models.filter((m) => m.saturn_optimized).length;
       const satNote = sat ? ` · ${sat} Saturn-ready` : "";
-      $meta.textContent = `Aktualizacja: ${d.toLocaleString()} · ${n} ${word}${satNote}`;
+      $meta.textContent = `Aktualizacja: ${d.toLocaleString()}${satNote}`;
     }
-    if ($saturnFilter) {
-      const hasSaturn = state.models.some((m) => m.saturn_optimized);
-      $saturnFilter.hidden = !hasSaturn;
+    const hasSaturn = state.models.some((m) => m.saturn_optimized);
+    if ($saturnFilter) $saturnFilter.hidden = !hasSaturn;
+    if ($legend) {
+      $legend.hidden = false;
+      $legend.innerHTML = hasSaturn
+        ? '<span class="legend-tag">★</span> presupported · <span class="legend-tag">[Saturn]</span> Elegoo Saturn 4 Ultra'
+        : '<span class="legend-tag">★</span> presupported';
     }
   } catch (err) {
     $grid.innerHTML = "";
@@ -206,6 +248,14 @@ async function load() {
 $search.addEventListener("input", () => {
   state.query = $search.value;
   renderGrid();
+});
+
+$search.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && $search.value) {
+    state.query = "";
+    $search.value = "";
+    renderGrid();
+  }
 });
 
 if ($saturnFilter) {
