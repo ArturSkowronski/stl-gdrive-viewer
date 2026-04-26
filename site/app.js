@@ -219,7 +219,14 @@ async function load() {
     const resp = await fetch("manifest.json", { cache: "no-cache" });
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
     const data = await resp.json();
-    state.models = data.models || [];
+    state.models = (data.models || []).slice().sort((a, b) => {
+      // Stable sort: presupported (★) models first, original order kept
+      // within each bucket. Manifest already comes release-sorted from
+      // scan.py, so this just lifts the ★ ones to the top.
+      const aPre = (a.stls || []).some((s) => s.presupported) ? 0 : 1;
+      const bPre = (b.stls || []).some((s) => s.presupported) ? 0 : 1;
+      return aPre - bPre;
+    });
     state.releases = data.releases || [];
     if (data.generated_at) {
       const d = new Date(data.generated_at);
