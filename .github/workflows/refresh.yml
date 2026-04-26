@@ -11,7 +11,11 @@ on:
   push:
     branches: [main]
   schedule:
-    - cron: "0 5 * * *"
+    # 02:00 UTC Mon–Sat (~03:00–04:00 Poland time, middle of the night).
+    # Sunday is reserved for the full `Rebuild gallery` workflow which
+    # walks the same Drive, re-picks every cover, and writes a fresh
+    # cache the Monday refresh resumes from.
+    - cron: "0 2 * * 1-6"
   workflow_dispatch:
     inputs:
       root_folder_id:

@@ -12,6 +12,12 @@ name: Rebuild gallery from scratch
 # refresh restores from, so the next refresh resumes from this baseline.
 
 on:
+  schedule:
+    # 02:00 UTC every Sunday — same nightly window as the daily
+    # incremental, just on the day we want a from-scratch rebuild.
+    # The fresh state lands in the same `gallery-state-*` cache so
+    # Monday's refresh resumes from this baseline.
+    - cron: "0 2 * * 0"
   workflow_dispatch:
     inputs:
       root_folder_id:

@@ -310,22 +310,30 @@ CI runs the same suite on every push to main and every PR.
 
 Two workflows feed the same Pages deployment:
 
-- **`Refresh gallery`** (`refresh.yml`) — daily cron, push to main, manual
-  dispatch. Runs `scanner --incremental`: every model whose `folder_id`
-  already appears in the cached manifest is copied forward verbatim
-  (no Drive image fetch, no PIL pass), only new models pay the cost.
-  State persists across runs via `actions/cache` keyed `gallery-state-*`.
-  Orphan thumb files (model deleted from Drive) are pruned each run.
-  This is the path that runs untouched once a day.
+- **`Refresh gallery`** (`refresh.yml`) — Mon–Sat 02:00 UTC cron, plus
+  push to main and manual dispatch. Runs `scanner --incremental`: every
+  model whose `folder_id` already appears in the cached manifest is
+  copied forward verbatim (no Drive image fetch, no PIL pass), only
+  new models pay the cost. State persists across runs via `actions/cache`
+  keyed `gallery-state-*`. Orphan thumb files (model deleted from
+  Drive) are pruned each run. **Important:** the walker still fully
+  descends the tree every run — only the per-model `pick_cover` and
+  thumb generation are skipped — so new model subfolders that
+  appear inside an already-known release folder mid-month (e.g.
+  NomNom dropping the third character of "April 2026 Release" two
+  weeks in) are detected as new `folder_id`s and processed fully on
+  the next nightly run.
 
-- **`Rebuild gallery from scratch`** (`rebuild.yml`) — manual dispatch
-  only. Drops the cached `site/manifest.json` + `site/thumbs/`, runs
-  the scanner with no `--incremental` flag, re-scores every cover and
-  re-picks every STL list. Fresh state is saved back to the same cache
-  key so the next refresh resumes from this baseline. Use after
-  changing selector/walker heuristics, or when NomNom updates an
-  existing folder (new BS render, new presupported variant) and you
-  want it picked up without waiting for a "happens to be new" model.
+- **`Rebuild gallery from scratch`** (`rebuild.yml`) — Sunday 02:00 UTC
+  cron and manual dispatch. Drops the cached `site/manifest.json` +
+  `site/thumbs/`, runs the scanner with no `--incremental` flag,
+  re-scores every cover and re-picks every STL list. Fresh state is
+  saved back to the same cache key so Monday's refresh resumes from
+  this baseline. The weekly cron exists so changes to existing models
+  (new BS render, new presupported variant added to a folder we've
+  already indexed) are picked up automatically once a week without
+  needing manual intervention; manual dispatch covers the
+  "I just changed selector heuristics, want it now" case.
 
 The contract: incremental trusts that **once a folder_id is indexed,
 its contents don't change**. STL renames inside an existing model
