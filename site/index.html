@@ -19,6 +19,14 @@
       placeholder="Szukaj modelu…"
       autocomplete="off"
       spellcheck="false">
+    <div class="sort-toggle" role="group" aria-label="Sortowanie">
+      <button id="sort-chrono" class="chip" type="button" aria-pressed="true">
+        Najnowsze
+      </button>
+      <button id="sort-alpha" class="chip" type="button" aria-pressed="false">
+        A–Z
+      </button>
+    </div>
     <div class="filters">
       <div id="releases" class="chips" aria-label="Filtruj po release"></div>
       <button
@@ -30,14 +38,6 @@
         hidden>
         Saturn 4 Ultra
       </button>
-      <div class="sort-toggle" role="group" aria-label="Sortowanie">
-        <button id="sort-chrono" class="chip" type="button" aria-pressed="true">
-          Najnowsze
-        </button>
-        <button id="sort-alpha" class="chip" type="button" aria-pressed="false">
-          A–Z
-        </button>
-      </div>
     </div>
   </header>
 
