@@ -27,6 +27,7 @@ ACL: ALLOWED_USER_IDS gates who can trigger uploads.
 from __future__ import annotations
 
 import asyncio
+import html
 import logging
 import os
 import re
@@ -242,10 +243,10 @@ async def _process_batch(
     display_name = _clean_name(filename)
 
     progress = await reply_to.reply_text(
-        f"📥 {display_name}\n"
-        f"plik: `{filename}` ({size_mb:.1f} MB)\n"
+        f"📥 {html.escape(display_name)}\n"
+        f"plik: <code>{html.escape(filename)}</code> ({size_mb:.1f} MB)\n"
         f"pobieram…",
-        parse_mode="Markdown",
+        parse_mode="HTML",
     )
 
     drive_root = os.environ["DRIVE_ROOT_FOLDER_ID"]
@@ -255,11 +256,15 @@ async def _process_batch(
         )
     except Exception as e:
         log.exception("drive existence check failed")
-        await progress.edit_text(f"❌ Błąd sprawdzenia Drive: {e}")
+        await progress.edit_text(
+            f"❌ Błąd sprawdzenia Drive: {html.escape(str(e))}",
+            parse_mode="HTML",
+        )
         return
     if existing_url:
         await progress.edit_text(
-            f"ℹ️ {display_name} już jest na Drive.\n{existing_url}"
+            f"ℹ️ {html.escape(display_name)} już jest na Drive.\n{existing_url}",
+            parse_mode="HTML",
         )
         return
 
@@ -290,10 +295,10 @@ async def _process_batch(
         is_archive = any(filename.lower().endswith(ext) for ext in ARCHIVE_EXTS)
         if is_archive:
             await progress.edit_text(
-                f"📦 {display_name}\n"
-                f"plik: `{filename}` ({size_mb:.1f} MB)\n"
+                f"📦 {html.escape(display_name)}\n"
+                f"plik: <code>{html.escape(filename)}</code> ({size_mb:.1f} MB)\n"
                 f"rozpakowuję…",
-                parse_mode="Markdown",
+                parse_mode="HTML",
             )
             extract_dir = job_dir / "extracted"
             try:
@@ -304,10 +309,10 @@ async def _process_batch(
                 log.warning("extraction failed (%s), uploading archive as-is", e)
 
         await progress.edit_text(
-            f"☁️ {display_name}\n"
-            f"plik: `{filename}` ({size_mb:.1f} MB)\n"
+            f"☁️ {html.escape(display_name)}\n"
+            f"plik: <code>{html.escape(filename)}</code> ({size_mb:.1f} MB)\n"
             f"wrzucam na Drive…",
-            parse_mode="Markdown",
+            parse_mode="HTML",
         )
 
         if upload_dir is not None:
@@ -320,17 +325,20 @@ async def _process_batch(
             )
 
         await progress.edit_text(
-            f"✅ {display_name}\n"
-            f"plik: `{filename}` ({size_mb:.1f} MB)\n"
+            f"✅ {html.escape(display_name)}\n"
+            f"plik: <code>{html.escape(filename)}</code> ({size_mb:.1f} MB)\n"
             f"{folder_url}",
-            parse_mode="Markdown",
+            parse_mode="HTML",
         )
         log.info("uploaded %s to %s", display_name, folder_url)
 
     except Exception as e:
         log.exception("upload failed for %s", filename)
         try:
-            await progress.edit_text(f"❌ {display_name}: {e}")
+            await progress.edit_text(
+            f"❌ {html.escape(display_name)}: {html.escape(str(e))}",
+            parse_mode="HTML",
+        )
         except Exception:
             pass
     finally:
