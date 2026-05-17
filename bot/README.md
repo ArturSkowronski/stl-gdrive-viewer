@@ -123,6 +123,215 @@ Detale są poza zakresem tego README — generic Fly compose docs się
 stosują. Pamiętaj: TBA potrzebuje persistent volume (cached sessions),
 bot potrzebuje read access do tego samego volumu (downloaded files).
 
+## Raspberry Pi — instalacja krok po kroku
+
+Wszystko poniżej dla **Raspberry Pi 4 / 5 z 64-bit Raspberry Pi OS**
+(ARM64). Pi 3B+ działa wolniej ale też się skompiluje. Pi Zero (ARMv6)
+nie poleca — TBA server tej architektury nie obsługuje.
+
+### 0. Hardware checklist
+
+| Zasób | Minimum | Zalecane |
+|---|---|---|
+| RAM | 2 GB | 4 GB+ (Pi 4/5) |
+| Storage | 32 GB SD | 64 GB SD + zewnętrzny SSD na USB do downloads |
+| Sieć | dowolna | przewodowa eth dla stabilności uploadów |
+| OS | RPi OS 64-bit Bookworm | jak Minimum |
+
+Bot pobiera multi-GB rary do volume'u `tba-data`. Jeśli zostawisz to
+na karcie SD, w ciągu kilku tygodni może się zapełnić — łatwiej
+zamontować SSD przez USB i przekierować volume tam.
+
+### 1. Świeży system + Docker
+
+```bash
+sudo apt update && sudo apt upgrade -y
+sudo apt install -y git curl ca-certificates
+
+# Oficjalny installer Dockera dla ARM (działa na RPi OS / Ubuntu)
+curl -fsSL https://get.docker.com | sudo sh
+
+# Pozwól swojemu userowi używać dockera bez sudo
+sudo usermod -aG docker $USER
+newgrp docker  # reload grup w bieżącej sesji
+
+# Sanity check
+docker run --rm hello-world
+```
+
+### 2. (Opcjonalnie) SSD na downloads
+
+Jeśli masz zewnętrzny SSD wpięty w USB 3.0:
+
+```bash
+# Zobacz urządzenie (zwykle /dev/sda1)
+lsblk
+
+# Sformatuj na ext4 (UWAGA: kasuje dane!)
+sudo mkfs.ext4 /dev/sda1
+
+# Zamontuj na stałe
+sudo mkdir -p /mnt/stl-data
+sudo blkid /dev/sda1  # skopiuj UUID
+echo "UUID=<TUTAJ> /mnt/stl-data ext4 defaults,noatime 0 2" | sudo tee -a /etc/fstab
+sudo mount -a
+sudo chown -R $USER:$USER /mnt/stl-data
+```
+
+W `docker-compose.yml` zmień volume mapping:
+
+```yaml
+volumes:
+  - /mnt/stl-data/tba:/var/lib/telegram-bot-api
+```
+
+Zamiast nazwanego `tba-data` — Docker będzie pisać prosto na SSD.
+
+### 3. Pobierz repo i bot
+
+```bash
+cd ~
+git clone https://github.com/ArturSkowronski/stl-gdrive-viewer.git
+cd stl-gdrive-viewer/bot
+```
+
+### 4. Wygeneruj credentials (na laptopie, nie na Pi)
+
+Pi nie ma przeglądarki — bootstrap odpalany na komputerze z GUI, potem
+przepisz wartości do `.env` na Pi.
+
+Na **laptopie**:
+
+```bash
+# Klon repo, środowisko Pythona
+pip install -r scanner/requirements.txt
+
+# Drive write token (osobny od scanner readonly!)
+python scanner/auth_bootstrap.py path/to/client_secret.json --write
+# Skopiuj GOOGLE_OAUTH_CLIENT_ID / _SECRET / _REFRESH_TOKEN
+```
+
+`@BotFather` na Telegramie:
+
+```
+/newbot   → wybierz nazwę i username, skopiuj HTTP API token
+/setprivacy → twojego bota → Disable
+```
+
+`https://my.telegram.org` → API development tools → Create new app
+→ skopiuj API_ID i API_HASH.
+
+Forward dowolnej wiadomości do `@userinfobot` → twój numeric user ID.
+
+### 5. Skonfiguruj `.env` na Pi
+
+```bash
+cp .env.example .env
+nano .env
+```
+
+Wklej wszystkie wartości z kroku 4. **`ALLOWED_USER_IDS` to twój numeric
+ID** — bez tego każdy kto trafi na bota mógłby uploadować w twój Drive.
+
+### 6. Pierwsze uruchomienie
+
+```bash
+docker compose up -d --build
+docker compose logs -f bot
+```
+
+Pierwszy build na Pi 4 trwa ~5 minut (instaluje pip deps + bs4 +
+google-api-python-client kompiluje się natywnie). Kolejne restarty
+wstają w ~10 sekund.
+
+Powinno wyświetlić `bot starting — work dir=...` i potem ciszę. Forwarduj
+dowolnego rara do bota — powinieneś dostać `📥 → ☁️ → ✅ {url}` w czacie.
+
+### 7. Auto-start przy boocie (systemd)
+
+Docker compose sam się NIE wstaje po reboot bez systemd unitu. Stwórz:
+
+```bash
+sudo tee /etc/systemd/system/stl-bot.service > /dev/null <<'EOF'
+[Unit]
+Description=STL Telegram-to-Drive bot
+Requires=docker.service
+After=docker.service network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=true
+WorkingDirectory=/home/pi/stl-gdrive-viewer/bot
+ExecStart=/usr/bin/docker compose up -d
+ExecStop=/usr/bin/docker compose down
+User=pi
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+# Dopasuj WorkingDirectory + User=pi do swojej nazwy użytkownika
+sudo systemctl daemon-reload
+sudo systemctl enable --now stl-bot.service
+sudo systemctl status stl-bot.service
+```
+
+Po reboot Pi (`sudo reboot`) bot wstanie automatycznie. Sprawdź
+`systemctl status stl-bot` i `docker compose logs -f bot` — jeśli widać
+"bot starting", wszystko OK.
+
+### 8. Aktualizacje
+
+```bash
+cd ~/stl-gdrive-viewer
+git pull
+cd bot
+docker compose up -d --build
+```
+
+Push do `main` na GitHubie nie wpływa na Pi automatycznie — musisz
+ręcznie `git pull` + rebuild. Jeśli chcesz auto-update, dodaj cronjob:
+
+```bash
+crontab -e
+# co niedzielę o 03:00:
+0 3 * * 0 cd /home/pi/stl-gdrive-viewer && git pull && cd bot && docker compose up -d --build >/dev/null 2>&1
+```
+
+### Troubleshooting na Pi
+
+**`bot exits immediately`** — sprawdź `docker compose logs bot`. Najczęściej
+brakuje któregoś sekretu w `.env` (`KeyError`).
+
+**`tba is unhealthy`** — TBA server potrzebuje 30-60s na pierwszy start
+(generuje sesję, ściąga DC info). Healthcheck w compose ma 30s grace.
+Jeśli dalej fail, sprawdź `docker compose logs tba` — najczęściej zły
+`TELEGRAM_API_ID/HASH`.
+
+**Upload się wiesza w połowie** — Drive resumable upload retry-uje
+automatycznie, ale wolne łącze + 1.5 GB rar = 20+ minut. Cierpliwość.
+Jeśli zawisa na stałe, restart compose i forward ponownie (bot jest
+idempotentny — wyłapie że plik już jest w połowie i… nie, nieprawda,
+zacznie od nowa — Drive resumable session żyje 7 dni ale bot trzyma
+session token w pamięci, restart = od zera).
+
+**RAM 2 GB i OOM** — Docker compose limit dla bota: dodaj do
+`docker-compose.yml` pod `bot:`:
+
+```yaml
+deploy:
+  resources:
+    limits:
+      memory: 512M
+```
+
+Większość uploadu chodzi przez resumable chunks po 16 MB, więc 512 MB
+spokojnie wystarczy.
+
+**SD card się zapełnia** — `docker system prune -a` od czasu do czasu
++ rozważ SSD (krok 2).
+
+
 ## Limity i caveats
 
 - **Telegram premium nie wymagane** — self-hosted TBA server omija
