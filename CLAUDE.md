@@ -79,11 +79,12 @@ scanner/
     walker.py         tree → list[Model] (generic-folder collapse, group/release labels)
     selector.py       Model.image_candidates → ScoredImage (cover decision)
     thumbs.py         Pillow → 600px JPEG, deterministic filename
+    telegram.py       optional: scrape t.me/s/<channel> public widget HTML
     scan.py           orchestrator + manifest writer + --analyze CSV mode
     │
     ▼
 site/
-    manifest.json     {generated_at, releases[], models[{id,name,release,thumb,stls[]}]}
+    manifest.json     {generated_at, releases[], models[{id,name,release,thumb,source?,stls[]}]}
     thumbs/*.jpg      generated, .gitignored
     index.html, app.js, styles.css   vanilla, no build step
     │
@@ -306,6 +307,96 @@ CI runs the same suite on every push to main and every PR.
   `stls[].name`, `stls[].size`, `stls[].presupported`. Anything else
   is internal to scan.py.
 
+## Telegram → Drive bot (`bot/`)
+
+Optional companion service. Long-running Python process the user
+deploys somewhere with Docker (homeserver, Fly.io, Railway, RPi).
+Listens for messages forwarded into a private chat with a Telegram
+bot, downloads the document via a self-hosted Telegram Bot API
+server (lifts the 20 MB public-API getFile cap so multi-GB archives
+work), uploads it to a sub-folder under the same `DRIVE_ROOT_FOLDER_ID`
+the scanner indexes, then replies with a Drive URL.
+
+No new code path on the gallery side — uploads land in the same Drive
+root, the next `Refresh gallery` cron picks them up like any other
+new model folder. The bot is just an alternate ingest mechanism for
+content the user wants in their personal Drive without manually
+downloading + re-uploading.
+
+Setup is one-time and documented in `bot/README.md`. Highlights:
+
+  - `python-telegram-bot==21.6` configured against a local TBA server
+    (`aiogram/telegram-bot-api` Docker image)
+  - shared Docker volume between TBA and bot, so multi-GB downloaded
+    files land on disk once and the bot reads them directly instead of
+    re-downloading through HTTPS
+  - `ALLOWED_USER_IDS` env var (comma-separated Telegram user IDs)
+    gates who can upload — uploads land in YOUR Drive, so default-deny
+  - `scanner/auth_bootstrap.py --write` mints a new OAuth refresh
+    token with the full `drive` scope; the scanner keeps its readonly
+    token, the bot uses the write one
+  - bot is idempotent on `(folder_name, filename)` — re-forwarding
+    the same archive replies "already there" without re-uploading
+
+`bot/worker.py` buffers media-group messages by `media_group_id` with
+a 2 s flush window (Telegram delivers album + document as separate
+updates), pairs the first photo with the first model-extension
+document, and queues a single upload per group.
+
+## Telegram as a second source
+
+Optional. Enabled by setting the `TELEGRAM_CHANNEL` repository variable
+(Settings → Secrets and variables → Actions → Variables) to a public
+channel username — no `@`, no `t.me/` prefix, e.g. `Best_STL_3D`. Leave
+the variable unset to skip Telegram entirely.
+
+`scanner/telegram.py` scrapes only the **first page** of
+`t.me/s/<channel>` on every run. The same incremental contract that
+protects Drive ("once indexed, doesn't change") applies here:
+
+  - new posts on the first page get fetched, thumbnailed, written to
+    the manifest with id `tg:<channel>:<message_id>`
+  - already-known message ids are skipped via the cached manifest
+  - posts that scrolled off the first page are carried forward from
+    cache verbatim — we deliberately never paginate deep history, so
+    the channel is indexed forward-only from the moment we first
+    started watching
+
+A "model" = one **document message** (`.rar/.zip/.7z/.stl/.ctb/.goo`)
+plus the immediately preceding photo-only message as its cover (Telegram
+media groups: an album of images followed by a file, posted as one
+unit). Cover URL is the inline `background-image` of the widget's
+photo wrap; downloaded as a few-hundred-KB JPEG from the CDN exactly
+like Drive's thumbnailLink fast path.
+
+Frontend distinguishes Telegram-sourced cards with a small blue `TG`
+badge on the card header and a `Otwórz w Telegramie ↗` folder link
+instead of the Drive one. STL dropdown logic is unchanged — `view_url`
+is just a `t.me/<channel>/<msg_id>` deep link that opens in the user's
+Telegram client.
+
+The Sunday rebuild also runs the Telegram pass (same first-page,
+lightweight code path) — it doesn't deep-walk the channel either,
+because doing so would multiply HTTP requests + scraping fragility
+for no real benefit. Existing TG entries survive the Sunday rebuild
+through cache carry-forward; see `rebuild.yml`'s "Drop Drive-source
+state" step.
+
+The scraper relies on Telegram's public widget HTML structure
+(`tgme_widget_message`, `tgme_widget_message_photo_wrap`,
+`tgme_widget_message_document`). If those classes ever change,
+`tests/test_telegram.py` will keep passing (the test uses a fixed
+snapshot) but the live run will silently return zero models — log a
+"telegram: parse failed" or "0 model(s) on first page" warning. Update
+the selectors in `scanner/telegram.py::parse_page` and the snapshot
+HTML in the test together.
+
+**Licence stance, same as Drive.** STL bytes never enter the repo;
+Telegram document messages are referenced by URL only, like Drive's
+`webViewLink`. The viewer's existing Telegram permissions decide
+whether they can download. The channel is expected to be the user's
+own — content they have rights to — the same way the Drive root is.
+
 ## Incremental vs full scans
 
 Two workflows feed the same Pages deployment:
@@ -368,9 +459,13 @@ Helpers live in `scanner/scan.py`:
 | `scanner/drive.py` | Drive API wrapper, throttle/retry, thumbnailLink, OAuth+API-key auth |
 | `scanner/walker.py` | tree → models, generic-folder collapse, display rename |
 | `scanner/selector.py` | cover regex tiers, scoring, hint pool |
+| `scanner/telegram.py` | optional second source: scrape t.me/s/&lt;channel&gt; first page |
 | `scanner/scan.py` | CLI entrypoint, manifest writer, `--analyze` CSV |
 | `scanner/thumbs.py` | Pillow thumbnail generation |
-| `scanner/auth_bootstrap.py` | one-time local script to mint OAuth refresh token |
+| `scanner/auth_bootstrap.py` | one-time local script to mint OAuth refresh token (readonly default, `--write` for bot) |
+| `bot/worker.py` | Telegram bot: receives forwarded archives, uploads to Drive |
+| `bot/drive_writer.py` | Drive write helper used by the bot — folder create + resumable file upload |
+| `bot/docker-compose.yml` | runs TBA server + bot worker together |
 | `site/app.js` | manifest fetch, card render, search, release filter |
 | `site/styles.css` | grid, dark mode, mobile-first responsive |
 | `tests/test_selector.py` | 60 frozen rules for cover regex + scoring |

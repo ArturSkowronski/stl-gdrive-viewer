@@ -124,14 +124,20 @@ function renderCard(m) {
   const saturnBadge = m.saturn_optimized
     ? `<span class="saturn-badge" title="Pliki przygotowane pod Elegoo Saturn 4 Ultra">Saturn optimized</span>`
     : "";
+  const isTelegram = m.source === "telegram";
+  const sourceBadge = isTelegram
+    ? `<span class="source-badge source-badge--tg" title="Źródło: Telegram">TG</span>`
+    : "";
+  const folderLabel = isTelegram ? "Otwórz w Telegramie ↗" : "Folder na Drive ↗";
   return `
-    <li class="card${m.saturn_optimized ? " is-saturn" : ""}" data-model-id="${escapeHTML(m.id)}">
+    <li class="card${m.saturn_optimized ? " is-saturn" : ""}${isTelegram ? " is-telegram" : ""}" data-model-id="${escapeHTML(m.id)}">
       <a class="thumb-wrap" href="${escapeHTML(thumbHref)}" target="_blank" rel="noopener">
         ${thumbInner}
       </a>
       <div class="body">
         <div class="card-tags">
           ${release}
+          ${sourceBadge}
           ${saturnBadge}
         </div>
         <h2>${escapeHTML(m.name)}</h2>
@@ -140,7 +146,7 @@ function renderCard(m) {
             ${stlPicker}
           </div>
           <a class="folder-link" href="${escapeHTML(m.folder_url)}" target="_blank" rel="noopener">
-            Folder na Drive ↗
+            ${escapeHTML(folderLabel)}
           </a>
         </div>
       </div>

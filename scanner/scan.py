@@ -22,6 +22,7 @@ if __package__ in (None, ""):
     )
     from scanner.thumbs import thumb_path, write_thumb  # noqa: E402
     from scanner.walker import walk  # noqa: E402
+    from scanner import telegram as tg  # noqa: E402
 else:
     from .drive import DriveClient
     from .selector import (
@@ -30,6 +31,7 @@ else:
     )
     from .thumbs import thumb_path, write_thumb
     from .walker import walk
+    from . import telegram as tg
 
 
 def _stl_view_url(file_id: str) -> str:
@@ -202,6 +204,17 @@ def main() -> int:
             "STL lists to re-pick from scratch."
         ),
     )
+    parser.add_argument(
+        "--telegram-channel",
+        metavar="USERNAME",
+        default=None,
+        help=(
+            "Public Telegram channel username (no @, no t.me/ prefix) to "
+            "also index alongside Drive. Only the first page of t.me/s/<name> "
+            "is fetched each run — new posts are added, old ones stay put. "
+            "Leave unset to skip the Telegram source entirely."
+        ),
+    )
     args = parser.parse_args()
 
     level = logging.WARNING
@@ -265,17 +278,27 @@ def main() -> int:
     if args.limit:
         models = models[: args.limit]
 
-    # Incremental mode: load the previous manifest and short-circuit any
-    # model whose folder_id we've already processed. The cached entry
-    # (display_name, release, thumb, stls, saturn_optimized) is copied
-    # verbatim — no Drive image fetch, no PIL pass.
-    cached: dict[str, dict] = (
-        _load_existing_manifest(out_path) if args.incremental else {}
+    # Load the previous manifest (if any) for two purposes:
+    #   1. --incremental Drive: short-circuit any model whose folder_id
+    #      we've already processed, copying the cached entry verbatim
+    #      (no Drive image fetch, no PIL pass).
+    #   2. Telegram carry-forward: TG entries that have scrolled off
+    #      the first page of t.me/s/<channel> need to survive on every
+    #      run regardless of the Drive flag, because we never deep-walk
+    #      the channel.
+    # An empty dict is fine — both code paths fall through to "process
+    # everything fresh" when there's no previous state.
+    cached: dict[str, dict] = _load_existing_manifest(out_path)
+    drive_cached: dict[str, dict] = (
+        {k: v for k, v in cached.items() if not k.startswith("tg:")}
+        if args.incremental
+        else {}
     )
-    if args.incremental:
+    if cached:
         logging.warning(
-            "incremental: loaded %d cached model(s) from %s",
+            "loaded %d cached model(s) from %s (Drive carry-forward: %s)",
             len(cached), out_path,
+            "enabled" if args.incremental else "disabled (full rescan)",
         )
 
     manifest_models = []
@@ -286,10 +309,10 @@ def main() -> int:
     newly_processed = 0
     for m in models:
         try:
-            if m.folder_id in cached:
+            if m.folder_id in drive_cached:
                 # Trust the previous run — caller asked for incremental,
                 # the contract is "once indexed, doesn't change."
-                manifest_models.append(cached[m.folder_id])
+                manifest_models.append(drive_cached[m.folder_id])
                 carried_forward += 1
                 continue
             cover = pick_cover(client, m)
@@ -346,6 +369,95 @@ def main() -> int:
             crashed.append(m.name)
             continue
 
+    # Telegram pass — always lightweight: first page of t.me/s/<channel>
+    # plus early-exit on known message_ids via the same `cached` dict.
+    # We deliberately never paginate deep history (see scanner/telegram.py
+    # docstring); the daily incremental run is sufficient to keep current
+    # because new posts arrive in real time, and once a post is indexed
+    # it stays in the manifest until the channel deletes it.
+    tg_carried_forward = 0
+    tg_new = 0
+    tg_failed: list[str] = []
+    if args.telegram_channel:
+        # Carry forward existing Telegram entries from the cached manifest —
+        # even on full Drive rebuilds (no --incremental), so a Sunday
+        # rebuild doesn't wipe the TG-sourced models. New posts get
+        # processed; known posts get copied.
+        tg_models = tg.fetch_channel(args.telegram_channel)
+        seen_ids = {f"tg:{args.telegram_channel}:{m.message_id}" for m in tg_models}
+        # Forward-carry any cached TG models whose IDs aren't in the
+        # current first-page slice — they've scrolled off the top page
+        # but still exist in the channel.
+        existing_tg = {
+            mid: entry for mid, entry in cached.items()
+            if mid.startswith(f"tg:{args.telegram_channel}:")
+        }
+        for mid, entry in existing_tg.items():
+            if mid not in seen_ids:
+                manifest_models.append(entry)
+                tg_carried_forward += 1
+
+        for tm in tg_models:
+            try:
+                if tm.id in cached:
+                    manifest_models.append(cached[tm.id])
+                    tg_carried_forward += 1
+                    continue
+                # New model — fetch cover if present, write thumb
+                thumb_rel: Optional[str] = None
+                if tm.cover_url:
+                    raw = tg.fetch_thumbnail(tm.cover_url)
+                    if raw:
+                        try:
+                            from PIL import Image
+                            import io as _io
+                            pil = Image.open(_io.BytesIO(raw)).convert("RGB")
+                            thumb_dest = thumb_path(
+                                thumbs_dir,
+                                f"tg-{tm.message_id}",
+                                str(tm.message_id),
+                            )
+                            write_thumb(pil, thumb_dest)
+                            thumb_rel = thumb_dest.relative_to(out_path.parent).as_posix()
+                        except Exception as e:
+                            logging.warning(
+                                "telegram: thumb write failed for %s: %s",
+                                tm.display_name, e,
+                            )
+                stl_entries = [
+                    {
+                        "file_id": f"tg:{tm.channel}:{tm.message_id}:{i}",
+                        "name": f.name,
+                        "size": f.size,
+                        "view_url": f.url,
+                        "presupported": _is_presupported_stl(f.name, ""),
+                        "saturn_optimized": _is_saturn_optimized(f.name, []),
+                    }
+                    for i, f in enumerate(tm.files)
+                ]
+                manifest_models.append({
+                    "id": tm.id,
+                    "name": tm.display_name,
+                    "release": None,
+                    "folder_url": tm.message_url,
+                    "thumb": thumb_rel,
+                    "saturn_optimized": any(s["saturn_optimized"] for s in stl_entries),
+                    "source": "telegram",
+                    "stls": stl_entries,
+                })
+                tg_new += 1
+            except Exception as e:
+                logging.exception(
+                    "telegram: crash processing %s — keeping run alive: %s",
+                    tm.display_name, e,
+                )
+                tg_failed.append(tm.display_name)
+                continue
+        logging.warning(
+            "telegram summary (%s): %d new, %d carried forward, %d failed",
+            args.telegram_channel, tg_new, tg_carried_forward, len(tg_failed),
+        )
+
     manifest_models.sort(
         key=lambda mm: (_release_sort_key(mm["release"]), mm["name"].lower())
     )
@@ -363,17 +475,19 @@ def main() -> int:
     }
     out_path.write_text(json.dumps(manifest, indent=2, ensure_ascii=False))
 
-    # In incremental mode, prune thumb files that no longer back any
-    # manifest entry — models removed from Drive (or merged into others)
-    # would otherwise leak files into the cache forever.
+    # Always prune thumb files that no longer back any manifest entry —
+    # whether we're in --incremental mode or a full rebuild, models
+    # that left the manifest leave their thumb behind otherwise.
+    pruned = _prune_orphan_thumbs(thumbs_dir, manifest_models)
     if args.incremental:
-        pruned = _prune_orphan_thumbs(thumbs_dir, manifest_models)
         seen_ids = {mm["id"] for mm in manifest_models}
-        dropped = [eid for eid in cached if eid not in seen_ids]
+        dropped = [eid for eid in drive_cached if eid not in seen_ids]
         logging.warning(
             "incremental summary: %d carried forward, %d new, %d dropped, %d orphan thumbs pruned",
             carried_forward, newly_processed, len(dropped), pruned,
         )
+    elif pruned:
+        logging.warning("orphan thumbs pruned: %d", pruned)
 
     # Final summary so the cause of any drop-off is obvious in CI logs.
     total = len(models)
