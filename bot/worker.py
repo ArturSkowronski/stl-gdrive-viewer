@@ -61,7 +61,7 @@ log = logging.getLogger("bot")
 MODEL_EXTS = (".stl", ".7z", ".zip", ".rar", ".ctb", ".goo")
 ARCHIVE_EXTS = (".7z", ".zip", ".rar")
 MEDIA_GROUP_FLUSH_S = 2.0
-SINGLE_FLUSH_S = 5.0  # wait for follow-up beauty-shot photo after a single RAR
+SINGLE_FLUSH_S = 30.0  # wait for follow-up beauty-shot photo after a single RAR
 WORK_DIR = Path(os.environ.get("BOT_WORK_DIR", "/tmp/stl-bot"))
 WORK_DIR.mkdir(parents=True, exist_ok=True)
 
