@@ -99,6 +99,37 @@ def _create_folder(svc, parent_id: str, name: str) -> str:
     return folder["id"]
 
 
+_SKIP_NAMES = frozenset(["__MACOSX", ".DS_Store", "Thumbs.db"])
+
+
+def _should_skip(name: str) -> bool:
+    return name in _SKIP_NAMES or name.startswith("._")
+
+
+def folder_exists_nonempty(drive_root: str, model_folder_name: str) -> Optional[str]:
+    """Return folder URL if <drive_root>/<model_folder_name>/ exists and
+    has at least one file, otherwise None.
+
+    Used as idempotency guard — covers both the archive-upload case (old)
+    and the extract-then-upload case (new) where there's no single
+    canonical filename to check against.
+    """
+    svc = _service()
+    folder_id = _find_folder(svc, drive_root, model_folder_name)
+    if not folder_id:
+        return None
+    resp = svc.files().list(
+        q=f"'{folder_id}' in parents and mimeType != '{FOLDER_MIME}' and trashed = false",
+        fields="files(id)",
+        pageSize=1,
+        supportsAllDrives=True,
+        includeItemsFromAllDrives=True,
+    ).execute()
+    if resp.get("files"):
+        return f"https://drive.google.com/drive/folders/{folder_id}"
+    return None
+
+
 def file_exists_in_folder(
     drive_root: str, model_folder_name: str, file_name: str
 ) -> Optional[str]:
@@ -140,6 +171,54 @@ def _upload(svc, parent_id: str, local_path: Path) -> dict:
             pct = int(status.progress() * 100)
             log.info("uploading %s — %d%%", local_path.name, pct)
     return response
+
+
+def _upload_dir(svc, parent_id: str, local_dir: Path) -> None:
+    """Recursively upload local_dir contents into parent_id on Drive.
+
+    Skips macOS metadata artefacts (__MACOSX, .DS_Store, ._* files).
+    Already-existing files are skipped (idempotent per filename).
+    """
+    for item in sorted(local_dir.iterdir()):
+        if _should_skip(item.name):
+            continue
+        if item.is_dir():
+            sub_id = _find_folder(svc, parent_id, item.name)
+            if sub_id is None:
+                sub_id = _create_folder(svc, parent_id, item.name)
+            _upload_dir(svc, sub_id, item)
+        elif item.is_file():
+            if not _find_file(svc, parent_id, item.name):
+                _upload(svc, parent_id, item)
+
+
+def upload_dir_tree(
+    drive_root: str,
+    model_folder_name: str,
+    local_dir: Path,
+    cover_path: Optional[Path],
+) -> str:
+    """Upload a local directory tree under <drive_root>/<model_folder_name>/.
+
+    Used when an archive was extracted locally — individual STL files
+    land on Drive instead of the archive blob, preserving sub-folder
+    structure (Presupported/, Unsupported/, etc.) for the scanner walker.
+    """
+    svc = _service()
+    folder_id = _find_folder(svc, drive_root, model_folder_name)
+    if folder_id is None:
+        folder_id = _create_folder(svc, drive_root, model_folder_name)
+        log.info("created folder %s under %s", model_folder_name, drive_root)
+    else:
+        log.info("reusing folder %s (%s)", model_folder_name, folder_id)
+
+    _upload_dir(svc, folder_id, local_dir)
+
+    if cover_path is not None and cover_path.exists():
+        if not _find_file(svc, folder_id, cover_path.name):
+            _upload(svc, folder_id, cover_path)
+
+    return f"https://drive.google.com/drive/folders/{folder_id}"
 
 
 def upload_model_files(

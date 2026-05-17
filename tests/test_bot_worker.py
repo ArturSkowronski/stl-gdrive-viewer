@@ -29,7 +29,8 @@ def _load_worker():
     # Stub `bot.drive_writer` — worker imports two symbols at module
     # load time, neither of which we exercise in unit tests.
     fake_dw = types.ModuleType("drive_writer")
-    fake_dw.file_exists_in_folder = lambda *a, **kw: None
+    fake_dw.folder_exists_nonempty = lambda *a, **kw: None
+    fake_dw.upload_dir_tree = lambda *a, **kw: ""
     fake_dw.upload_model_files = lambda *a, **kw: ""
     sys.modules["drive_writer"] = fake_dw
 
@@ -106,3 +107,57 @@ def test_allowed_user_ids_empty_returns_empty_set(monkeypatch):
 def test_allowed_user_ids_ignores_non_numeric(monkeypatch):
     monkeypatch.setenv("ALLOWED_USER_IDS", "111,abc,222")
     assert worker._allowed_user_ids() == {111, 222}
+
+
+# --- _extract / _unwrap_single_dir ----------------------------------------
+
+def test_extract_zip(tmp_path):
+    import zipfile as zf
+    archive = tmp_path / "model.zip"
+    with zf.ZipFile(archive, "w") as z:
+        z.writestr("body.stl", "solid body\nendsolid")
+        z.writestr("head.stl", "solid head\nendsolid")
+    dest = tmp_path / "out"
+    worker._extract(archive, dest)
+    assert (dest / "body.stl").exists()
+    assert (dest / "head.stl").exists()
+
+
+def test_extract_zip_preserves_subfolders(tmp_path):
+    import zipfile as zf
+    archive = tmp_path / "model.zip"
+    with zf.ZipFile(archive, "w") as z:
+        z.writestr("Presupported/body.stl", "data")
+        z.writestr("Unsupported/body.stl", "data")
+    dest = tmp_path / "out"
+    worker._extract(archive, dest)
+    assert (dest / "Presupported" / "body.stl").exists()
+    assert (dest / "Unsupported" / "body.stl").exists()
+
+
+def test_extract_unsupported_ext_raises(tmp_path):
+    import pytest
+    fake = tmp_path / "model.xyz"
+    fake.write_bytes(b"data")
+    with pytest.raises((ValueError, Exception)):
+        worker._extract(fake, tmp_path / "out")
+
+
+def test_unwrap_single_dir_unwraps(tmp_path):
+    inner = tmp_path / "Model Name"
+    inner.mkdir()
+    (inner / "body.stl").write_text("solid")
+    assert worker._unwrap_single_dir(tmp_path) == inner
+
+
+def test_unwrap_single_dir_keeps_flat(tmp_path):
+    (tmp_path / "body.stl").write_text("solid")
+    (tmp_path / "head.stl").write_text("solid")
+    assert worker._unwrap_single_dir(tmp_path) == tmp_path
+
+
+def test_unwrap_single_dir_keeps_mixed(tmp_path):
+    (tmp_path / "body.stl").write_text("solid")
+    sub = tmp_path / "Presupported"
+    sub.mkdir()
+    assert worker._unwrap_single_dir(tmp_path) == tmp_path
