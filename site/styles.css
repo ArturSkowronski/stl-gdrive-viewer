@@ -348,6 +348,19 @@ main {
   letter-spacing: 0.02em;
 }
 
+.source-badge {
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+
+.source-badge--tg {
+  background: #2aabee;
+  color: #fff;
+}
+
 .chip-saturn {
   background: #f59e0b;
   color: #1a1300;

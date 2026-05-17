@@ -56,8 +56,32 @@ jobs:
       - name: Install deps
         run: pip install -r scanner/requirements.txt
 
-      - name: Drop any leftover thumbs from previous runs
-        run: rm -rf site/thumbs site/manifest.json
+      - name: Restore previous gallery state (for Telegram carry-forward only)
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            site/manifest.json
+            site/thumbs
+          key: gallery-state-${{ github.run_id }}
+          restore-keys: |
+            gallery-state-
+
+      - name: Drop Drive-source state, keep Telegram entries
+        run: |
+          # Drive entries are re-derived from scratch by the scanner.
+          # Telegram entries live behind tg:* ids and are carried forward
+          # by scan.py reading the still-on-disk manifest.json. We delete
+          # only thumbs that no Telegram model would reference; the
+          # scanner's orphan-prune cleans up anything stale at the end.
+          if [ -f site/manifest.json ]; then
+            python - <<'PY'
+          import json, pathlib
+          p = pathlib.Path("site/manifest.json")
+          data = json.loads(p.read_text(encoding="utf-8"))
+          data["models"] = [m for m in data.get("models", []) if m.get("id", "").startswith("tg:")]
+          p.write_text(json.dumps(data, indent=2, ensure_ascii=False))
+          PY
+          fi
 
       - name: Scan Drive and build manifest (full)
         env:
@@ -67,12 +91,22 @@ jobs:
           GOOGLE_OAUTH_REFRESH_TOKEN: ${{ secrets.GOOGLE_OAUTH_REFRESH_TOKEN }}
           ROOT_FOLDER_ID: ${{ inputs.root_folder_id || vars.GDRIVE_ROOT_FOLDER_ID || '15F2OsqqekNu3C8MpdhMtsAcuZl5OwCDX' }}
           LIMIT: ${{ inputs.limit }}
+          TELEGRAM_CHANNEL: ${{ vars.TELEGRAM_CHANNEL }}
         run: |
           args=(--root "$ROOT_FOLDER_ID" -v --out site/manifest.json --thumbs site/thumbs)
           if [ -n "$LIMIT" ]; then
             args+=(--limit "$LIMIT")
           fi
-          # Note: no --incremental — every model is re-scored from scratch.
+          if [ -n "$TELEGRAM_CHANNEL" ]; then
+            # Telegram is always lightweight (first-page only). The
+            # Sunday rebuild doesn't deep-walk the channel either —
+            # carrying TG entries forward via the cached manifest is
+            # how older posts survive.
+            args+=(--telegram-channel "$TELEGRAM_CHANNEL")
+          fi
+          # Note: no --incremental — every Drive model is re-scored
+          # from scratch. Telegram entries are carried forward through
+          # the cache regardless of the Drive flag.
           python -m scanner.scan "${args[@]}"
 
       - name: Save fresh gallery state for next refresh

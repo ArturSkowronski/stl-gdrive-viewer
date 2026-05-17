@@ -79,11 +79,12 @@ scanner/
     walker.py         tree → list[Model] (generic-folder collapse, group/release labels)
     selector.py       Model.image_candidates → ScoredImage (cover decision)
     thumbs.py         Pillow → 600px JPEG, deterministic filename
+    telegram.py       optional: scrape t.me/s/<channel> public widget HTML
     scan.py           orchestrator + manifest writer + --analyze CSV mode
     │
     ▼
 site/
-    manifest.json     {generated_at, releases[], models[{id,name,release,thumb,stls[]}]}
+    manifest.json     {generated_at, releases[], models[{id,name,release,thumb,source?,stls[]}]}
     thumbs/*.jpg      generated, .gitignored
     index.html, app.js, styles.css   vanilla, no build step
     │
@@ -306,6 +307,60 @@ CI runs the same suite on every push to main and every PR.
   `stls[].name`, `stls[].size`, `stls[].presupported`. Anything else
   is internal to scan.py.
 
+## Telegram as a second source
+
+Optional. Enabled by setting the `TELEGRAM_CHANNEL` repository variable
+(Settings → Secrets and variables → Actions → Variables) to a public
+channel username — no `@`, no `t.me/` prefix, e.g. `Best_STL_3D`. Leave
+the variable unset to skip Telegram entirely.
+
+`scanner/telegram.py` scrapes only the **first page** of
+`t.me/s/<channel>` on every run. The same incremental contract that
+protects Drive ("once indexed, doesn't change") applies here:
+
+  - new posts on the first page get fetched, thumbnailed, written to
+    the manifest with id `tg:<channel>:<message_id>`
+  - already-known message ids are skipped via the cached manifest
+  - posts that scrolled off the first page are carried forward from
+    cache verbatim — we deliberately never paginate deep history, so
+    the channel is indexed forward-only from the moment we first
+    started watching
+
+A "model" = one **document message** (`.rar/.zip/.7z/.stl/.ctb/.goo`)
+plus the immediately preceding photo-only message as its cover (Telegram
+media groups: an album of images followed by a file, posted as one
+unit). Cover URL is the inline `background-image` of the widget's
+photo wrap; downloaded as a few-hundred-KB JPEG from the CDN exactly
+like Drive's thumbnailLink fast path.
+
+Frontend distinguishes Telegram-sourced cards with a small blue `TG`
+badge on the card header and a `Otwórz w Telegramie ↗` folder link
+instead of the Drive one. STL dropdown logic is unchanged — `view_url`
+is just a `t.me/<channel>/<msg_id>` deep link that opens in the user's
+Telegram client.
+
+The Sunday rebuild also runs the Telegram pass (same first-page,
+lightweight code path) — it doesn't deep-walk the channel either,
+because doing so would multiply HTTP requests + scraping fragility
+for no real benefit. Existing TG entries survive the Sunday rebuild
+through cache carry-forward; see `rebuild.yml`'s "Drop Drive-source
+state" step.
+
+The scraper relies on Telegram's public widget HTML structure
+(`tgme_widget_message`, `tgme_widget_message_photo_wrap`,
+`tgme_widget_message_document`). If those classes ever change,
+`tests/test_telegram.py` will keep passing (the test uses a fixed
+snapshot) but the live run will silently return zero models — log a
+"telegram: parse failed" or "0 model(s) on first page" warning. Update
+the selectors in `scanner/telegram.py::parse_page` and the snapshot
+HTML in the test together.
+
+**Licence stance, same as Drive.** STL bytes never enter the repo;
+Telegram document messages are referenced by URL only, like Drive's
+`webViewLink`. The viewer's existing Telegram permissions decide
+whether they can download. The channel is expected to be the user's
+own — content they have rights to — the same way the Drive root is.
+
 ## Incremental vs full scans
 
 Two workflows feed the same Pages deployment:
@@ -368,6 +423,7 @@ Helpers live in `scanner/scan.py`:
 | `scanner/drive.py` | Drive API wrapper, throttle/retry, thumbnailLink, OAuth+API-key auth |
 | `scanner/walker.py` | tree → models, generic-folder collapse, display rename |
 | `scanner/selector.py` | cover regex tiers, scoring, hint pool |
+| `scanner/telegram.py` | optional second source: scrape t.me/s/&lt;channel&gt; first page |
 | `scanner/scan.py` | CLI entrypoint, manifest writer, `--analyze` CSV |
 | `scanner/thumbs.py` | Pillow thumbnail generation |
 | `scanner/auth_bootstrap.py` | one-time local script to mint OAuth refresh token |

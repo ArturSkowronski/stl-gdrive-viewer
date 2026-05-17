@@ -82,6 +82,10 @@ jobs:
           ROOT_FOLDER_ID: ${{ inputs.root_folder_id || vars.GDRIVE_ROOT_FOLDER_ID || '15F2OsqqekNu3C8MpdhMtsAcuZl5OwCDX' }}
           LIMIT: ${{ inputs.limit }}
           ANALYZE: ${{ inputs.analyze }}
+          # Optional: set TELEGRAM_CHANNEL repo variable to a public
+          # channel username (e.g. `Best_STL_3D`) to also index Telegram
+          # posts. Leave the variable unset to skip the Telegram source.
+          TELEGRAM_CHANNEL: ${{ vars.TELEGRAM_CHANNEL }}
         run: |
           args=(--root "$ROOT_FOLDER_ID" -v)
           if [ -n "$LIMIT" ]; then
@@ -93,6 +97,9 @@ jobs:
             # --incremental skips cover/thumb work for folder_ids already
             # in site/manifest.json (restored from cache above).
             args+=(--incremental --out site/manifest.json --thumbs site/thumbs)
+            if [ -n "$TELEGRAM_CHANNEL" ]; then
+              args+=(--telegram-channel "$TELEGRAM_CHANNEL")
+            fi
           fi
           python -m scanner.scan "${args[@]}"
 
