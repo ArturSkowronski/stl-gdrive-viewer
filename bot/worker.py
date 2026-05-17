@@ -1,30 +1,27 @@
 """Telegram bot that uploads forwarded model files to Google Drive.
 
-Pattern: the user forwards a NomNom-style media-group (album of cover
-images followed by a .rar/.zip/.stl document) into a private chat with
-this bot. The bot:
+Pattern: the user forwards a NomNom-style message into a private chat.
+The bot:
 
   1. Buffers messages of the same media_group_id for ~2s (Telegram
-     delivers media-group messages as separate updates).
-  2. For single-message uploads (no media_group), buffers 5s so a
-     follow-up photo sent right after counts as the cover.
-  3. Picks the first photo from the group as the cover (saved as
-     "Beauty shot.jpg" so the scanner hard-picks it as gallery cover),
-     the first archive/STL document as the model file.
-  4. Downloads both via the LOCAL Telegram Bot API server (no 20 MB cap).
-  5. Extracts .zip/.7z/.rar archives to a temp dir before uploading so
-     individual STL files land on Drive (not the archive blob).
-  6. Uploads to `<DRIVE_ROOT_FOLDER_ID>/<cleaned-model-name>/` with
-     resumable chunked upload. Same folder structure the scanner already
-     walks — the next daily refresh picks up new model folders like any
-     other Drive model.
-  7. Replies in chat with ✅ + Drive folder URL, or ❌ + error.
+     delivers album messages as separate updates). Photo + archive in
+     the same album → cover is picked from the album.
+  2. Single archive message (no album) → download starts immediately.
+     Photo-only messages from the same user are stored as a pending
+     cover (TTL 2 min). After the archive download completes, the bot
+     checks whether a cover arrived in the meantime and uses it.
+  3. Archives (.zip/.7z/.rar) are extracted locally first; individual
+     STL files land on Drive preserving sub-folder structure so the
+     scanner walker classifies them normally.
+  4. Cover saved as "Beauty shot.jpg" so the scanner hard-picks it.
+  5. Uploads to `<DRIVE_ROOT_FOLDER_ID>/<cleaned-model-name>/` with
+     resumable chunked upload. Next daily refresh picks it up.
+  6. Replies ✅ + Drive folder URL, or ❌ + error.
 
 Idempotent: if the target folder already contains files, re-forwarding
-the same archive replies "already there" without re-uploading.
+replies "already there" without re-uploading.
 
-ACL: ALLOWED_USER_IDS (comma-separated Telegram user IDs) restricts
-who can trigger uploads. Anything from other users is silently ignored.
+ACL: ALLOWED_USER_IDS gates who can trigger uploads.
 """
 
 from __future__ import annotations
@@ -35,6 +32,7 @@ import os
 import re
 import shutil
 import subprocess
+import time as _time
 import zipfile
 from collections import defaultdict
 from pathlib import Path
@@ -61,7 +59,7 @@ log = logging.getLogger("bot")
 MODEL_EXTS = (".stl", ".7z", ".zip", ".rar", ".ctb", ".goo")
 ARCHIVE_EXTS = (".7z", ".zip", ".rar")
 MEDIA_GROUP_FLUSH_S = 2.0
-SINGLE_FLUSH_S = 30.0  # wait for follow-up beauty-shot photo after a single RAR
+COVER_TTL_S = 120.0  # how long a pending cover stays valid
 WORK_DIR = Path(os.environ.get("BOT_WORK_DIR", "/tmp/stl-bot"))
 WORK_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -111,9 +109,8 @@ def _extract(archive_path: Path, dest: Path) -> None:
 def _unwrap_single_dir(path: Path) -> Path:
     """If path contains exactly one subdirectory and no files, unwrap it.
 
-    NomNom archives often look like `Model.rar → Model/ → *.stl` — we
-    want the inner folder to become the Drive folder contents directly,
-    not a folder-inside-a-folder.
+    NomNom archives often look like Model.rar → Model/ → *.stl — we
+    want the inner folder contents to land at Drive folder root.
     """
     children = list(path.iterdir())
     if len(children) == 1 and children[0].is_dir():
@@ -121,13 +118,35 @@ def _unwrap_single_dir(path: Path) -> Path:
     return path
 
 
-# --- message buffering ---------------------------------------------------
+# --- pending-cover store (for single-message uploads) --------------------
+
+# (chat_id, user_id) → (photo_message, expiry_monotonic)
+_pending_covers: dict[tuple, tuple[Message, float]] = {}
+# Signalled when a cover arrives, so _process_single can wake up fast.
+_cover_events: dict[tuple, asyncio.Event] = {}
+
+
+def _store_pending_cover(chat_id: int, user_id: int, msg: Message) -> None:
+    key = (chat_id, user_id)
+    _pending_covers[key] = (msg, _time.monotonic() + COVER_TTL_S)
+    ev = _cover_events.get(key)
+    if ev is not None:
+        ev.set()
+    log.debug("stored pending cover from user %s in chat %s", user_id, chat_id)
+
+
+def _pop_pending_cover(chat_id: int, user_id: int) -> Optional[Message]:
+    key = (chat_id, user_id)
+    entry = _pending_covers.pop(key, None)
+    if entry and _time.monotonic() < entry[1]:
+        return entry[0]
+    return None
+
+
+# --- media-group buffering -----------------------------------------------
 
 _pending_groups: dict[tuple, list[Message]] = defaultdict(list)
 _pending_group_tasks: dict[tuple, asyncio.Task] = {}
-
-_pending_singles: dict[tuple, list[Message]] = defaultdict(list)
-_pending_single_tasks: dict[tuple, asyncio.Task] = {}
 
 
 async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -150,15 +169,18 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             _flush_group(key, context)
         )
     else:
-        # Single message — buffer briefly so a follow-up beauty-shot
-        # photo sent right after the RAR is paired with it.
-        key = (msg.chat_id, user_id)
-        _pending_singles[key].append(msg)
-        if key in _pending_single_tasks:
-            _pending_single_tasks[key].cancel()
-        _pending_single_tasks[key] = asyncio.create_task(
-            _flush_single(key, context)
+        has_model_doc = msg.document and (
+            (msg.document.file_name or "").lower().endswith(MODEL_EXTS)
         )
+        if has_model_doc:
+            # Start download immediately; cover check happens after download.
+            asyncio.create_task(_process_single(msg, user_id, context))
+        elif msg.photo and not msg.document:
+            # Photo-only → store as pending cover for an in-flight upload.
+            _store_pending_cover(msg.chat_id, user_id, msg)
+        else:
+            # Text or unsupported attachment — ignore silently.
+            pass
 
 
 async def _flush_group(key: tuple, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -169,24 +191,32 @@ async def _flush_group(key: tuple, context: ContextTypes.DEFAULT_TYPE) -> None:
     messages = _pending_groups.pop(key, [])
     _pending_group_tasks.pop(key, None)
     if messages:
-        await _process_batch(messages, context)
+        await _process_batch(messages, context, user_id=None)
 
 
-async def _flush_single(key: tuple, context: ContextTypes.DEFAULT_TYPE) -> None:
+# --- core upload logic ---------------------------------------------------
+
+async def _process_single(
+    msg: Message, user_id: int, context: ContextTypes.DEFAULT_TYPE
+) -> None:
+    """Entry point for single-message (non-album) uploads.
+
+    Runs the upload, then after the archive download is done checks
+    whether a cover photo arrived in the meantime.
+    """
+    cover_key = (msg.chat_id, user_id)
+    ev = asyncio.Event()
+    _cover_events[cover_key] = ev
     try:
-        await asyncio.sleep(SINGLE_FLUSH_S)
-    except asyncio.CancelledError:
-        return
-    messages = _pending_singles.pop(key, [])
-    _pending_single_tasks.pop(key, None)
-    if messages:
-        await _process_batch(messages, context)
+        await _process_batch([msg], context, user_id=user_id)
+    finally:
+        _cover_events.pop(cover_key, None)
 
-
-# --- core upload logic --------------------------------------------------
 
 async def _process_batch(
-    messages: list[Message], context: ContextTypes.DEFAULT_TYPE
+    messages: list[Message],
+    context: ContextTypes.DEFAULT_TYPE,
+    user_id: Optional[int],
 ) -> None:
     doc_msg: Optional[Message] = None
     photo_msg: Optional[Message] = None
@@ -241,6 +271,13 @@ async def _process_batch(
     try:
         tg_file = await context.bot.get_file(doc.file_id)
         await tg_file.download_to_drive(custom_path=str(local_doc))
+
+        # After download: if the batch had no photo, check for a cover
+        # the user sent while the download was running.
+        if photo_msg is None and user_id is not None:
+            photo_msg = _pop_pending_cover(doc_msg.chat_id, user_id)
+            if photo_msg:
+                log.info("using pending cover for %s", display_name)
 
         if photo_msg and photo_msg.photo:
             largest = photo_msg.photo[-1]
