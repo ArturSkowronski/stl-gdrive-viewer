@@ -1,0 +1,65 @@
+# Two-process compose: self-hosted Telegram Bot API server (no 20 MB
+# download limit) + the bot worker that watches for forwarded model
+# files and uploads them to Drive.
+#
+# Usage:
+#   cp .env.example .env
+#   # fill in TELEGRAM_*, DRIVE_*, GOOGLE_OAUTH_* values
+#   docker compose up -d --build
+#   docker compose logs -f bot
+#
+# Stop:
+#   docker compose down
+#
+# Persistent state (downloaded files, TBA session) lives in the
+# `tba-data` volume — keep it around between restarts so the bot
+# doesn't lose in-flight downloads.
+
+services:
+  tba:
+    # Official Telegram Bot API server source:
+    # https://github.com/tdlib/telegram-bot-api
+    # The aiogram org publishes a tracked Docker build; if you'd
+    # rather build from source, swap `image:` for `build:` + the
+    # upstream Dockerfile.
+    image: aiogram/telegram-bot-api:latest
+    restart: unless-stopped
+    environment:
+      TELEGRAM_API_ID: ${TELEGRAM_API_ID}
+      TELEGRAM_API_HASH: ${TELEGRAM_API_HASH}
+      # --local lifts the 20 MB getFile / 50 MB sendDocument cap.
+      TELEGRAM_LOCAL: "1"
+    volumes:
+      - tba-data:/var/lib/telegram-bot-api
+    expose:
+      - "8081"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://localhost:8081/ || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  bot:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      tba:
+        condition: service_healthy
+    environment:
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}
+      TELEGRAM_BOT_API_URL: "http://tba:8081"
+      ALLOWED_USER_IDS: ${ALLOWED_USER_IDS:-}
+      DRIVE_ROOT_FOLDER_ID: ${DRIVE_ROOT_FOLDER_ID}
+      GOOGLE_OAUTH_CLIENT_ID: ${GOOGLE_OAUTH_CLIENT_ID}
+      GOOGLE_OAUTH_CLIENT_SECRET: ${GOOGLE_OAUTH_CLIENT_SECRET}
+      GOOGLE_OAUTH_REFRESH_TOKEN: ${GOOGLE_OAUTH_REFRESH_TOKEN}
+      BOT_WORK_DIR: /var/lib/telegram-bot-api
+    volumes:
+      # Same volume mounted into both containers: TBA writes downloads
+      # here, bot reads from the same paths. Saves a re-download cycle
+      # for multi-GB archives.
+      - tba-data:/var/lib/telegram-bot-api
+
+volumes:
+  tba-data:

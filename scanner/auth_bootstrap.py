@@ -1,11 +1,17 @@
 """One-time local script to generate a Drive OAuth refresh token.
 
 Usage:
-    python scanner/auth_bootstrap.py path/to/client_secret.json
+    python scanner/auth_bootstrap.py path/to/client_secret.json [--write]
 
 Opens a browser window, asks you to log in (use the account that has the
 NomNom files), then prints three values to paste into GitHub Secrets:
 GOOGLE_OAUTH_CLIENT_ID, GOOGLE_OAUTH_CLIENT_SECRET, GOOGLE_OAUTH_REFRESH_TOKEN.
+
+`--write` switches the requested scope from `drive.readonly` to `drive`
+(read + write). Use this when minting a token for the bot/ uploader,
+which needs to create folders and files. The scanner itself only ever
+reads, but having a write token in its env doesn't hurt — Drive lets a
+write-scoped token call read endpoints all the same.
 """
 
 from __future__ import annotations
@@ -16,19 +22,27 @@ from pathlib import Path
 
 from google_auth_oauthlib.flow import InstalledAppFlow
 
-SCOPES = ["https://www.googleapis.com/auth/drive.readonly"]
+SCOPES_READONLY = ["https://www.googleapis.com/auth/drive.readonly"]
+SCOPES_WRITE = ["https://www.googleapis.com/auth/drive"]
 
 
 def main() -> int:
-    if len(sys.argv) != 2:
-        print("usage: python scanner/auth_bootstrap.py <client_secret.json>")
+    args = sys.argv[1:]
+    write_mode = False
+    if "--write" in args:
+        write_mode = True
+        args.remove("--write")
+    if len(args) != 1:
+        print("usage: python scanner/auth_bootstrap.py <client_secret.json> [--write]")
         return 2
-    secret_path = Path(sys.argv[1])
+    scopes = SCOPES_WRITE if write_mode else SCOPES_READONLY
+    print(f"requesting scopes: {scopes}")
+    secret_path = Path(args[0])
     if not secret_path.exists():
         print(f"file not found: {secret_path}")
         return 1
 
-    flow = InstalledAppFlow.from_client_secrets_file(str(secret_path), SCOPES)
+    flow = InstalledAppFlow.from_client_secrets_file(str(secret_path), scopes)
     # access_type=offline + prompt=consent guarantees a refresh_token even if
     # the user has previously consented.
     creds = flow.run_local_server(

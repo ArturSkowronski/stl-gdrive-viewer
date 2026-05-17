@@ -307,6 +307,42 @@ CI runs the same suite on every push to main and every PR.
   `stls[].name`, `stls[].size`, `stls[].presupported`. Anything else
   is internal to scan.py.
 
+## Telegram → Drive bot (`bot/`)
+
+Optional companion service. Long-running Python process the user
+deploys somewhere with Docker (homeserver, Fly.io, Railway, RPi).
+Listens for messages forwarded into a private chat with a Telegram
+bot, downloads the document via a self-hosted Telegram Bot API
+server (lifts the 20 MB public-API getFile cap so multi-GB archives
+work), uploads it to a sub-folder under the same `DRIVE_ROOT_FOLDER_ID`
+the scanner indexes, then replies with a Drive URL.
+
+No new code path on the gallery side — uploads land in the same Drive
+root, the next `Refresh gallery` cron picks them up like any other
+new model folder. The bot is just an alternate ingest mechanism for
+content the user wants in their personal Drive without manually
+downloading + re-uploading.
+
+Setup is one-time and documented in `bot/README.md`. Highlights:
+
+  - `python-telegram-bot==21.6` configured against a local TBA server
+    (`aiogram/telegram-bot-api` Docker image)
+  - shared Docker volume between TBA and bot, so multi-GB downloaded
+    files land on disk once and the bot reads them directly instead of
+    re-downloading through HTTPS
+  - `ALLOWED_USER_IDS` env var (comma-separated Telegram user IDs)
+    gates who can upload — uploads land in YOUR Drive, so default-deny
+  - `scanner/auth_bootstrap.py --write` mints a new OAuth refresh
+    token with the full `drive` scope; the scanner keeps its readonly
+    token, the bot uses the write one
+  - bot is idempotent on `(folder_name, filename)` — re-forwarding
+    the same archive replies "already there" without re-uploading
+
+`bot/worker.py` buffers media-group messages by `media_group_id` with
+a 2 s flush window (Telegram delivers album + document as separate
+updates), pairs the first photo with the first model-extension
+document, and queues a single upload per group.
+
 ## Telegram as a second source
 
 Optional. Enabled by setting the `TELEGRAM_CHANNEL` repository variable
@@ -426,7 +462,10 @@ Helpers live in `scanner/scan.py`:
 | `scanner/telegram.py` | optional second source: scrape t.me/s/&lt;channel&gt; first page |
 | `scanner/scan.py` | CLI entrypoint, manifest writer, `--analyze` CSV |
 | `scanner/thumbs.py` | Pillow thumbnail generation |
-| `scanner/auth_bootstrap.py` | one-time local script to mint OAuth refresh token |
+| `scanner/auth_bootstrap.py` | one-time local script to mint OAuth refresh token (readonly default, `--write` for bot) |
+| `bot/worker.py` | Telegram bot: receives forwarded archives, uploads to Drive |
+| `bot/drive_writer.py` | Drive write helper used by the bot — folder create + resumable file upload |
+| `bot/docker-compose.yml` | runs TBA server + bot worker together |
 | `site/app.js` | manifest fetch, card render, search, release filter |
 | `site/styles.css` | grid, dark mode, mobile-first responsive |
 | `tests/test_selector.py` | 60 frozen rules for cover regex + scoring |
