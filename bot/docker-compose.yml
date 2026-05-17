@@ -41,7 +41,10 @@ services:
       start_period: 30s
 
   bot:
-    build: .
+    # Pre-built multi-arch image (amd64 + arm64) published by GitHub Actions.
+    # On Pi: docker compose pull && docker compose up -d
+    # To build locally instead: replace `image:` with `build: .`
+    image: ghcr.io/arturskowronski/stl-gdrive-viewer-bot:latest
     restart: unless-stopped
     depends_on:
       tba:
